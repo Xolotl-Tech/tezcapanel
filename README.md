@@ -1,36 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tezcapanel
 
-## Getting Started
+Tezcapanel es un panel de administración web inspirado en cPanel, creado para gestionar servicios de hosting personal. Está desarrollado con Next.js, TypeScript y Tailwind CSS, ofreciendo una interfaz moderna, segura y personalizable.
 
-First, run the development server:
+## Características principales
+
+- Gestión de usuarios y dominios
+- Administración de archivos y bases de datos
+- Panel para correo electrónico y servicios comunes de hosting
+- Interfaz responsiva y moderna
+- Seguridad y buenas prácticas integradas
+
+## Primeros pasos
+
+Instala las dependencias y ejecuta el servidor de desarrollo:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abre [http://localhost:3000](http://localhost:3000) en tu navegador para ver el panel.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Estructura del proyecto
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `src/app/` — Páginas y layout principal
+- `src/app/page.tsx` — Página principal editable
+- `src/app/globals.css` — Estilos globales (Tailwind)
 
-## Learn More
+## Personalización
 
-To learn more about Next.js, take a look at the following resources:
+Puedes modificar y ampliar los módulos según tus necesidades de hosting personal.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Proyecto generado con [Next.js](https://nextjs.org/) y [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
