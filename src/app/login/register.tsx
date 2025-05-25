@@ -98,6 +98,8 @@ export default function RegisterPage() {
           <button
             type="submit"
             className="mt-2 w-full py-3 rounded-lg font-bold text-[#181A20] text-lg bg-gradient-to-r from-[#70F6F7] to-[#7BFF08] hover:scale-105 transition-transform shadow font-spacehabitat"
+            style={{ fontSize: '0.96875rem' }}
+            onClick={() => window.location.href = '/dashboard'}
           >
             Crear cuenta
           </button>
