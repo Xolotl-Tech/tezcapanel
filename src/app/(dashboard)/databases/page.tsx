@@ -111,8 +111,7 @@ export default function DatabasesPage() {
           <p className="text-sm font-semibold mt-1">
             {databases.reduce((acc, db) => acc + (db.size ?? 0), 0) > 0
               ? formatBytes(databases.reduce((acc, db) => acc + (db.size ?? 0), 0))
-              : "–"
-            }
+              : "–"}
           </p>
         </div>
       </div>
@@ -123,7 +122,6 @@ export default function DatabasesPage() {
         </div>
       )}
 
-      {/* Tabla */}
       {loading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
@@ -148,93 +146,92 @@ export default function DatabasesPage() {
         </div>
       ) : (
         <div className="bg-card border border-border rounded-lg overflow-hidden">
-          {/* Cabecera */}
-          <div className="grid grid-cols-[2fr_1.5fr_1fr_100px_100px_90px_auto] gap-4 px-5 py-3 border-b border-border bg-secondary/30">
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Base de datos</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-center">Usuario</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-center">Host</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-center">Quota</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-center">Backup</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-center">Location</span>
-            <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider text-right">Acciones</span>
-          </div>
-
-          {/* Filas */}
-          <div className="divide-y divide-border">
-            {databases.map((db) => (
-              <div
-  key={db.id}
-  className="grid grid-cols-[2fr_1.5fr_1fr_100px_100px_90px_auto] gap-4 px-5 py-3.5 items-center hover:bg-secondary/20 transition-colors"
->
-                {/* DB name */}
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                    <Database className="w-3 h-3 text-primary" />
-                  </div>
-                  <span className="text-sm font-mono font-medium truncate">{db.name}</span>
-                </div>
-
-                {/* Usuario */}
-                <span className="text-sm font-mono text-muted-foreground truncate text-center">{db.user}</span>
-
-                {/* Host */}
-                <span className="text-sm text-muted-foreground text-center">{db.host}</span>
-
-                {/* Quota */}
-                <span className="text-xs text-muted-foreground text-center">
-                  {db.size ? formatBytes(db.size) : "–"}
-                </span>
-
-                {/* Backup */}
-                <span className="text-xs text-muted-foreground text-center">–</span>
-
-                {/* Location */}
-                <span className="text-xs text-muted-foreground text-center">Localhost</span>
-
-                {/* Acciones */}
-                <div className="flex items-center justify-end gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-[11px] text-primary hover:text-primary hover:bg-primary/10"
-                    onClick={() => window.open(`http://localhost/phpmyadmin`, "_blank")}
-                  >
-                    <ExternalLink className="w-3 h-3 mr-1" />
-                    phpMyAdmin
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 text-muted-foreground hover:text-accent"
-                    title="Cambiar contraseña"
-                    onClick={() => {
-                      setSelectedDb(db)
-                      setShowChangePassword(true)
-                    }}
-                  >
-                    <KeyRound className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 text-muted-foreground hover:text-primary"
-                    title="Backup"
-                  >
-                    <Archive className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="w-7 h-7 text-muted-foreground hover:text-destructive"
-                    title="Eliminar"
-                    onClick={() => handleDelete(db.id, db.name)}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border bg-secondary/30">
+                <th className="text-left text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Base de datos</th>
+                <th className="text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Usuario</th>
+                <th className="text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Host</th>
+                <th className="text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Quota</th>
+                <th className="text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Backup</th>
+                <th className="text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Location</th>
+                <th className="text-right text-[11px] font-medium text-muted-foreground uppercase tracking-wider px-5 py-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {databases.map((db) => (
+                <tr key={db.id} className="hover:bg-secondary/20 transition-colors">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                        <Database className="w-3 h-3 text-primary" />
+                      </div>
+                      <span className="text-sm font-mono font-medium">{db.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className="text-sm font-mono text-muted-foreground">{db.user}</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className="text-sm text-muted-foreground">{db.host}</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className="text-xs text-muted-foreground">
+                      {db.size ? formatBytes(db.size) : "–"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className="text-xs text-muted-foreground">–</span>
+                  </td>
+                  <td className="px-4 py-3.5 text-center">
+                    <span className="text-xs text-muted-foreground">Localhost</span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px] text-primary hover:text-primary hover:bg-primary/10"
+                        onClick={() => window.open(`http://localhost/phpmyadmin`, "_blank")}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        phpMyAdmin
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-accent"
+                        title="Cambiar contraseña"
+                        onClick={() => {
+                          setSelectedDb(db)
+                          setShowChangePassword(true)
+                        }}
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-primary"
+                        title="Backup"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="w-7 h-7 text-muted-foreground hover:text-destructive"
+                        title="Eliminar"
+                        onClick={() => handleDelete(db.id, db.name)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
