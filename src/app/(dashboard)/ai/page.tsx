@@ -71,14 +71,8 @@ export default function AIPage() {
   }
 
   async function handleConfirmActions(messageId: string, actions: ProposedAction[]) {
-  // Si no hay acciones es una cancelación
-  if (actions.length === 0) {
     updateMessage(messageId, { actionsExecuted: true })
-    return
-  }
-  updateMessage(messageId, { actionsExecuted: true })
-  setLoading(true)
-  // ... resto igual
+    setLoading(true)
 
     const executingId = generateId()
     addMessage({
@@ -109,6 +103,7 @@ export default function AIPage() {
         return
       }
 
+      // Construir reporte de resultados
       const results = data.results ?? []
       const allSuccess = results.every((r: { success: boolean }) => r.success)
 
@@ -125,6 +120,7 @@ export default function AIPage() {
         timestamp: new Date(),
       })
 
+      // Pedir a Byte que interprete los resultados
       const followUpMsg = allSuccess
         ? `Las acciones se ejecutaron exitosamente. Resultados: ${resultSummary}. Dame un resumen de lo que se hizo y próximos pasos si aplican.`
         : `Algunas acciones fallaron. Resultados: ${resultSummary}. Explícame qué salió mal y cómo solucionarlo.`

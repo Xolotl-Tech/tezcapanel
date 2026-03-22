@@ -1,544 +1,690 @@
-# Tezcapanel — Agent Instructions (Commit 5)
+# Tezcapanel — Agent Instructions (Commit 6)
 
 ## Objetivo
 
-Implementar la ejecución real de comandos en el servidor desde Byte AI.
-El botón "Confirmar y ejecutar" debe llamar al agente Node.js, ejecutar los comandos
-aprobados, y reportar el resultado en el chat en tiempo real.
+Implementar el módulo Web con gestión real de sitios Nginx:
+- Listar sitios activos e inactivos
+- Crear nuevo sitio con virtual host
+- Habilitar/deshabilitar sitios
+- Ver logs de acceso y error
+- SSL con Let's Encrypt (UI lista, ejecución via Byte AI)
 
 ---
 
 ## Contexto
 
-- **Stack:** Next.js 15, TypeScript, Tailwind CSS, shadcn/ui, NextAuth v5, Prisma + SQLite, Zustand
-- **Agente:** Node.js en `/agent/server.js`, puerto 7070
-- **Commits anteriores:** Byte AI funcional con Haiku, propone acciones pero no las ejecuta aún
-- **IMPORTANTE:** La ejecución de comandos debe ser segura — lista blanca estricta,
-  nunca ejecutar comandos arbitrarios del usuario directamente.
+- **Stack:** Next.js 15, TypeScript, Tailwind CSS, shadcn/ui, NextAuth v5, Prisma + SQLite
+- **Agente:** Node.js v0.2.0 en `/agent/server.js`, puerto 7070
+- **Commits anteriores:** Dashboard con métricas, Byte AI con ejecución real de comandos
+- **IMPORTANTE:** Este módulo opera sobre Linux — en Mac los comandos de Nginx no funcionarán.
+  La UI debe funcionar en desarrollo aunque el agente reporte errores de ejecución.
 
 ---
 
-## Parte 1 — Actualizar el agente Node.js
+## Parte 1 — Modelo de datos para sitios web
 
-### `agent/server.js` — REEMPLAZAR COMPLETO
+### `prisma/schema.prisma` — Agregar modelo Website
 
-```js
-const http = require("http")
-const { exec } = require("child_process")
-const si = require("systeminformation")
+Agregar al final del archivo, después del modelo `AuditLog`:
 
-const PORT = 7070
-const HOST = "127.0.0.1"
-const TOKEN = process.env.AGENT_TOKEN
-
-if (!TOKEN) {
-  console.error("❌ AGENT_TOKEN no definido")
-  process.exit(1)
+```prisma
+model Website {
+  id        String   @id @default(cuid())
+  domain    String   @unique
+  rootPath  String
+  phpVersion String? 
+  ssl       Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+```
 
-// --- Lista blanca de comandos permitidos ---
-// NUNCA ejecutar comandos arbitrarios — solo los de esta lista
-const ALLOWED_COMMANDS = [
-  // Gestión de paquetes
-  /^apt(-get)? (install|remove|update|upgrade) -y [\w\s\-\.]+$/,
-  /^apt(-get)? install -y [\w\s\-\.]+$/,
-  /^yum (install|remove|update) -y [\w\s\-\.]+$/,
-  /^dnf (install|remove|update) -y [\w\s\-\.]+$/,
+Luego ejecutar:
 
-  // Systemctl
-  /^systemctl (start|stop|restart|reload|enable|disable|status) [\w\-\.]+$/,
-
-  // Nginx
-  /^nginx -t$/,
-  /^nginx -s reload$/,
-
-  // MySQL / MariaDB
-  /^mysql -e "CREATE DATABASE [\w]+ CHARACTER SET utf8mb4"$/,
-  /^mysql -e "CREATE USER '[\w]+'@'localhost' IDENTIFIED BY '[^']+'"$/,
-  /^mysql -e "GRANT ALL ON [\w]+\.\* TO '[\w]+'@'localhost'"$/,
-  /^mysql -e "FLUSH PRIVILEGES"$/,
-  /^mysqldump [\w\s\-\.]+ > [\w\/\-\.]+$/,
-
-  // Certbot / SSL
-  /^certbot --nginx -d [\w\.\-]+ --non-interactive --agree-tos -m [\w@\.\-]+$/,
-  /^certbot renew --dry-run$/,
-  /^certbot renew$/,
-
-  // Archivos de configuración (solo escritura en paths permitidos)
-  /^mkdir -p \/etc\/(nginx|apache2|mysql|postfix)\//,
-  /^mkdir -p \/var\/www\/[\w\-\.]+$/,
-  /^chown -R www-data:www-data \/var\/www\/[\w\-\.]+$/,
-  /^chmod -R 755 \/var\/www\/[\w\-\.]+$/,
-
-  // Información del sistema (solo lectura)
-  /^cat \/var\/log\/(nginx|apache2|mysql|syslog|auth\.log)(\/[\w\-\.]+)?$/,
-  /^tail -n \d+ \/var\/log\/(nginx|apache2|mysql|syslog|auth\.log)(\/[\w\-\.]+)?$/,
-  /^df -h$/,
-  /^free -h$/,
-  /^top -bn1$/,
-  /^ps aux$/,
-  /^netstat -tlnp$/,
-  /^ss -tlnp$/,
-
-  // ufw firewall
-  /^ufw (enable|disable|status|allow|deny) ?[\w\/]*$/,
-
-  // wget / curl para descargas estándar
-  /^wget -O [\w\/\-\.]+ https:\/\/[\w\.\-\/\?=&]+$/,
-]
-
-function isCommandAllowed(command) {
-  return ALLOWED_COMMANDS.some((pattern) => pattern.test(command.trim()))
-}
-
-function executeCommand(command, timeout = 30000) {
-  return new Promise((resolve, reject) => {
-    if (!isCommandAllowed(command)) {
-      reject(new Error(`Comando no permitido: ${command}`))
-      return
-    }
-
-    exec(command, { timeout, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && error.killed) {
-        reject(new Error("Comando excedió el tiempo límite"))
-        return
-      }
-      resolve({
-        success: !error,
-        stdout: stdout?.trim() ?? "",
-        stderr: stderr?.trim() ?? "",
-        exitCode: error?.code ?? 0,
-      })
-    })
-  })
-}
-
-// --- Auth ---
-function isAuthorized(req) {
-  const auth = req.headers["authorization"] ?? ""
-  return auth === `Bearer ${TOKEN}`
-}
-
-// --- Headers ---
-function setHeaders(res) {
-  res.setHeader("Content-Type", "application/json")
-  res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000")
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")
-}
-
-// --- Handlers ---
-async function handleMetrics(res) {
-  const [cpuData, cpuLoad, mem, disk, osInfo] = await Promise.all([
-    si.cpu(),
-    si.currentLoad(),
-    si.mem(),
-    si.fsSize(),
-    si.osInfo(),
-  ])
-
-  const rootDisk = disk.find((d) => d.mount === "/") ?? disk[0] ?? {}
-
-  const metrics = {
-    cpu: {
-      usage: parseFloat((cpuLoad.currentLoad ?? 0).toFixed(1)),
-      cores: cpuData.cores ?? 1,
-      model: `${cpuData.manufacturer} ${cpuData.brand}`.trim() || "Unknown",
-    },
-    memory: {
-      total: mem.total ?? 0,
-      used: mem.used ?? 0,
-      free: mem.free ?? 0,
-    },
-    disk: {
-      total: rootDisk.size ?? 0,
-      used: rootDisk.used ?? 0,
-      free: (rootDisk.size ?? 0) - (rootDisk.used ?? 0),
-    },
-    uptime: Math.floor(si.time().uptime ?? 0),
-    hostname: osInfo.hostname ?? "localhost",
-    os: `${osInfo.distro ?? osInfo.platform} ${osInfo.release ?? ""}`.trim(),
-  }
-
-  res.end(JSON.stringify(metrics))
-}
-
-async function handleServices(res) {
-  const processes = await si.processes()
-  const running = new Set(processes.list.map((p) => p.name.toLowerCase()))
-
-  const targets = [
-    { name: "nginx",   check: "nginx" },
-    { name: "mysql",   check: "mysqld" },
-    { name: "postfix", check: "postfix" },
-    { name: "named",   check: "named" },
-  ]
-
-  const services = targets.map(({ name, check }) => ({
-    name,
-    status: running.has(check) ? "running" : "stopped",
-  }))
-
-  res.end(JSON.stringify(services))
-}
-
-async function handleExecute(req, res) {
-  let body = ""
-  req.on("data", (chunk) => { body += chunk })
-  req.on("end", async () => {
-    try {
-      const { commands } = JSON.parse(body)
-
-      if (!Array.isArray(commands) || commands.length === 0) {
-        res.writeHead(400)
-        res.end(JSON.stringify({ error: "commands array requerido" }))
-        return
-      }
-
-      if (commands.length > 10) {
-        res.writeHead(400)
-        res.end(JSON.stringify({ error: "máximo 10 comandos por ejecución" }))
-        return
-      }
-
-      const results = []
-
-      for (const command of commands) {
-        if (typeof command !== "string") {
-          results.push({ command, success: false, error: "comando inválido" })
-          continue
-        }
-
-        try {
-          const result = await executeCommand(command)
-          results.push({ command, ...result })
-
-          // Si un comando falla, detener la cadena
-          if (!result.success) {
-            results.push({
-              command: "(detenido)",
-              success: false,
-              error: "Ejecución detenida por error en comando anterior",
-            })
-            break
-          }
-        } catch (err) {
-          results.push({
-            command,
-            success: false,
-            error: err.message,
-            stdout: "",
-            stderr: "",
-          })
-          break
-        }
-      }
-
-      res.end(JSON.stringify({ results }))
-    } catch {
-      res.writeHead(400)
-      res.end(JSON.stringify({ error: "JSON inválido" }))
-    }
-  })
-}
-
-async function handleRestartService(name, res) {
-  const allowed = ["nginx", "mysql", "mariadb", "postfix", "named", "apache2"]
-  if (!allowed.includes(name)) {
-    res.writeHead(400)
-    res.end(JSON.stringify({ error: "servicio no permitido" }))
-    return
-  }
-
-  try {
-    const result = await executeCommand(`systemctl restart ${name}`)
-    res.end(JSON.stringify(result))
-  } catch (err) {
-    res.writeHead(500)
-    res.end(JSON.stringify({ error: err.message }))
-  }
-}
-
-// --- Router ---
-const server = http.createServer(async (req, res) => {
-  setHeaders(res)
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204)
-    res.end()
-    return
-  }
-
-  if (!isAuthorized(req)) {
-    res.writeHead(401)
-    res.end(JSON.stringify({ error: "unauthorized" }))
-    return
-  }
-
-  const url = req.url ?? "/"
-  const method = req.method ?? "GET"
-
-  try {
-    if (method === "GET" && url === "/health") {
-      res.end(JSON.stringify({ status: "ok", version: "0.2.0" }))
-    } else if (method === "GET" && url === "/metrics") {
-      await handleMetrics(res)
-    } else if (method === "GET" && url === "/services") {
-      await handleServices(res)
-    } else if (method === "POST" && url === "/execute") {
-      await handleExecute(req, res)
-    } else if (method === "POST" && url.startsWith("/services/") && url.endsWith("/restart")) {
-      const name = url.split("/")[2]
-      await handleRestartService(name, res)
-    } else {
-      res.writeHead(404)
-      res.end(JSON.stringify({ error: "not found" }))
-    }
-  } catch (err) {
-    console.error("Agent error:", err)
-    res.writeHead(500)
-    res.end(JSON.stringify({ error: "internal error" }))
-  }
-})
-
-server.listen(PORT, HOST, () => {
-  console.log(`✔ tezcaagent v0.2.0 escuchando en http://${HOST}:${PORT}`)
-})
+```bash
+npx prisma migrate dev --name add_website_model
+npx prisma generate
 ```
 
 ---
 
-## Parte 2 — API Route de ejecución en Next.js
+## Parte 2 — API Routes del módulo Web
 
-### `src/app/api/agent/execute/route.ts` — CREAR
+### `src/app/api/web/sites/route.ts` — CREAR
 
 ```typescript
 import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 
-const AGENT_URL = process.env.AGENT_URL ?? "http://127.0.0.1:7070"
-const AGENT_TOKEN = process.env.AGENT_TOKEN ?? ""
+// GET — listar todos los sitios
+export async function GET() {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+  const sites = await prisma.website.findMany({
+    orderBy: { createdAt: "desc" },
+  })
+
+  return NextResponse.json({ sites })
+}
+
+// POST — crear nuevo sitio
 export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { commands, actionLabels } = await req.json()
+  const { domain, rootPath, phpVersion } = await req.json()
 
-  if (!Array.isArray(commands) || commands.length === 0) {
-    return NextResponse.json({ error: "commands requerido" }, { status: 400 })
+  if (!domain || !rootPath) {
+    return NextResponse.json({ error: "domain y rootPath requeridos" }, { status: 400 })
   }
 
-  // Registrar en audit log antes de ejecutar
+  // Validar formato de dominio
+  const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9\-\.]{0,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$/
+  if (!domainRegex.test(domain)) {
+    return NextResponse.json({ error: "Formato de dominio inválido" }, { status: 400 })
+  }
+
+  const existing = await prisma.website.findUnique({ where: { domain } })
+  if (existing) {
+    return NextResponse.json({ error: "El dominio ya existe" }, { status: 409 })
+  }
+
+  const site = await prisma.website.create({
+    data: { domain, rootPath, phpVersion },
+  })
+
+  // Registrar en audit log
   await prisma.auditLog.create({
     data: {
       userId: session.user.id,
-      action: "execute_commands",
-      target: actionLabels?.join(", ") ?? commands.join(", "),
-      metadata: JSON.stringify({ commands }),
+      action: "create_website",
+      target: domain,
+      metadata: JSON.stringify({ domain, rootPath }),
     },
   })
 
-  try {
-    const res = await fetch(`${AGENT_URL}/execute`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AGENT_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ commands }),
-      signal: AbortSignal.timeout(60000), // 60s para comandos largos
-    })
-
-    const data = await res.json()
-    return NextResponse.json(data)
-  } catch {
-    return NextResponse.json({ error: "agent_unavailable" }, { status: 503 })
-  }
+  return NextResponse.json({ site })
 }
 ```
 
 ---
 
-## Parte 3 — Actualizar el chat para ejecutar acciones reales
-
-### `src/app/(dashboard)/ai/page.tsx` — Modificar función `handleConfirmActions`
-
-Buscar esta función:
+### `src/app/api/web/sites/[id]/route.ts` — CREAR
 
 ```typescript
-async function handleConfirmActions(messageId: string, actions: ProposedAction[]) {
-  updateMessage(messageId, { actionsExecuted: true })
-  const confirmMsg = `He confirmado las acciones propuestas. (Nota: la ejecución real de comandos en el servidor estará disponible en la próxima versión del panel.)`
-  await sendMessage(confirmMsg)
+import { auth } from "@/lib/auth"
+import { NextRequest, NextResponse } from "next/server"
+import { prisma } from "@/lib/prisma"
+
+// PATCH — actualizar sitio (toggle active, ssl)
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const data = await req.json()
+  const site = await prisma.website.update({
+    where: { id: params.id },
+    data,
+  })
+
+  return NextResponse.json({ site })
+}
+
+// DELETE — eliminar sitio
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const site = await prisma.website.findUnique({ where: { id: params.id } })
+  if (!site) return NextResponse.json({ error: "Sitio no encontrado" }, { status: 404 })
+
+  await prisma.website.delete({ where: { id: params.id } })
+
+  await prisma.auditLog.create({
+    data: {
+      userId: session.user.id,
+      action: "delete_website",
+      target: site.domain,
+    },
+  })
+
+  return NextResponse.json({ ok: true })
 }
 ```
 
-Reemplazar con:
+---
 
-```typescript
-async function handleConfirmActions(messageId: string, actions: ProposedAction[]) {
-  updateMessage(messageId, { actionsExecuted: true })
-  setLoading(true)
+## Parte 3 — Componentes del módulo Web
 
-  const executingId = generateId()
-  addMessage({
-    id: executingId,
-    role: "assistant",
-    content: "⏳ Ejecutando acciones en el servidor...",
-    timestamp: new Date(),
-  })
+### `src/components/web/site-card.tsx` — CREAR
 
-  try {
-    const res = await fetch("/api/agent/execute", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        commands: actions.map((a) => a.command),
-        actionLabels: actions.map((a) => a.label),
-      }),
-    })
+```tsx
+"use client"
 
-    const data = await res.json()
+import { useState } from "react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Globe, Lock, MoreVertical, Power, Trash2, ExternalLink } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 
-    if (data.error === "agent_unavailable") {
-      updateMessage(executingId, {
-        content: "❌ El agente no está disponible. Verifica que `tezcaagent` esté corriendo.",
-        timestamp: new Date(),
-      })
-      setLoading(false)
-      return
-    }
+interface Site {
+  id: string
+  domain: string
+  rootPath: string
+  phpVersion?: string | null
+  ssl: boolean
+  active: boolean
+  createdAt: string
+}
 
-    // Construir reporte de resultados
-    const results = data.results ?? []
-    const allSuccess = results.every((r: { success: boolean }) => r.success)
+interface SiteCardProps {
+  site: Site
+  onToggle: (id: string, active: boolean) => Promise<void>
+  onDelete: (id: string, domain: string) => Promise<void>
+}
 
-    const resultSummary = results
-      .map((r: { command: string; success: boolean; stdout: string; stderr: string; error?: string }) =>
-        `${r.success ? "✔" : "✖"} \`${r.command}\`${r.stdout ? `\n   ${r.stdout.slice(0, 200)}` : ""}${r.error ? `\n   Error: ${r.error}` : ""}`
-      )
-      .join("\n")
+export function SiteCard({ site, onToggle, onDelete }: SiteCardProps) {
+  const [loading, setLoading] = useState(false)
 
-    updateMessage(executingId, {
-      content: allSuccess
-        ? `✅ Todas las acciones ejecutadas correctamente:\n\n${resultSummary}`
-        : `⚠️ Algunas acciones fallaron:\n\n${resultSummary}`,
-      timestamp: new Date(),
-    })
-
-    // Pedir a Byte que interprete los resultados
-    const followUpMsg = allSuccess
-      ? `Las acciones se ejecutaron exitosamente. Resultados: ${resultSummary}. Dame un resumen de lo que se hizo y próximos pasos si aplican.`
-      : `Algunas acciones fallaron. Resultados: ${resultSummary}. Explícame qué salió mal y cómo solucionarlo.`
-
-    await sendMessage(followUpMsg)
-  } catch {
-    updateMessage(executingId, {
-      content: "❌ Error al ejecutar las acciones. Intenta de nuevo.",
-      timestamp: new Date(),
-    })
-  } finally {
+  async function handleToggle() {
+    setLoading(true)
+    await onToggle(site.id, !site.active)
     setLoading(false)
   }
-}
-```
 
----
-
-## Parte 4 — Actualizar el componente de acciones para mostrar estado
-
-### `src/components/ai/chat-message.tsx` — Modificar la sección de acciones ejecutadas
-
-Buscar:
-```tsx
-{/* Acciones ejecutadas */}
-{message.actionsExecuted && (
-  <div className="flex items-center gap-1.5 text-xs text-primary">
-    <CheckCircle2 className="w-3 h-3" />
-    Acciones ejecutadas
-  </div>
-)}
-```
-
-Reemplazar con:
-```tsx
-{/* Acciones ejecutadas */}
-{message.actionsExecuted && (
-  <div className="flex items-center gap-1.5 text-xs text-primary">
-    <CheckCircle2 className="w-3 h-3" />
-    Ejecutado — revisa el resultado abajo
-  </div>
-)}
-```
-
----
-
-## Parte 5 — Audit log page
-
-### `src/app/(dashboard)/settings/page.tsx` — Agregar sección de audit log
-
-Agregar al final del JSX, antes del cierre del `div` principal:
-
-```tsx
-{/* Audit log */}
-<AuditLogSection />
-```
-
-### `src/components/dashboard/audit-log.tsx` — CREAR
-
-```tsx
-import { prisma } from "@/lib/prisma"
-import { Badge } from "@/components/ui/badge"
-import { History } from "lucide-react"
-
-async function getAuditLogs() {
-  return prisma.auditLog.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  })
-}
-
-export async function AuditLogSection() {
-  const logs = await getAuditLogs()
-
-  if (logs.length === 0) return null
+  async function handleDelete() {
+    if (!confirm(`¿Eliminar el sitio ${site.domain}?`)) return
+    setLoading(true)
+    await onDelete(site.id, site.domain)
+    setLoading(false)
+  }
 
   return (
-    <div className="bg-card border border-border rounded-lg overflow-hidden">
-      <div className="px-5 py-4 border-b border-border flex items-center gap-2">
-        <History className="w-4 h-4 text-muted-foreground" />
-        <h2 className="text-sm font-medium">Registro de actividad</h2>
-        <Badge variant="secondary" className="ml-auto">{logs.length}</Badge>
-      </div>
-      <div className="divide-y divide-border max-h-64 overflow-y-auto">
-        {logs.map((log) => (
-          <div key={log.id} className="px-5 py-3 flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-xs font-medium truncate">{log.action}</span>
-              {log.target && (
-                <span className="text-[10px] text-muted-foreground truncate">{log.target}</span>
+    <div className={cn(
+      "bg-card border border-border rounded-lg p-5 flex items-center justify-between gap-4",
+      !site.active && "opacity-60"
+    )}>
+      <div className="flex items-center gap-4 min-w-0">
+        {/* Icono */}
+        <div className={cn(
+          "w-9 h-9 rounded-md flex items-center justify-center shrink-0",
+          site.active
+            ? "bg-primary/10 border border-primary/20"
+            : "bg-muted border border-border"
+        )}>
+          <Globe className={cn(
+            "w-4 h-4",
+            site.active ? "text-primary" : "text-muted-foreground"
+          )} />
+        </div>
+
+        {/* Info */}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium truncate">{site.domain}</span>
+            {site.ssl && (
+              <Badge variant="outline" className="border-primary/30 text-primary text-[10px] h-4">
+                <Lock className="w-2.5 h-2.5 mr-1" />
+                SSL
+              </Badge>
+            )}
+            {site.phpVersion && (
+              <Badge variant="secondary" className="text-[10px] h-4">
+                PHP {site.phpVersion}
+              </Badge>
+            )}
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px] h-4",
+                site.active
+                  ? "border-primary/30 text-primary"
+                  : "border-border text-muted-foreground"
               )}
-            </div>
-            <span className="text-[10px] text-muted-foreground shrink-0">
-              {new Date(log.createdAt).toLocaleString("es-MX", {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </span>
+            >
+              {site.active ? "Activo" : "Inactivo"}
+            </Badge>
           </div>
-        ))}
+          <p className="text-xs text-muted-foreground mt-0.5 truncate font-mono">
+            {site.rootPath}
+          </p>
+        </div>
+      </div>
+
+      {/* Acciones */}
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="w-8 h-8 text-muted-foreground hover:text-foreground"
+          onClick={() => window.open(`http://${site.domain}`, "_blank")}
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-8 h-8 text-muted-foreground hover:text-foreground"
+              disabled={loading}
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem onClick={handleToggle}>
+              <Power className="mr-2 h-3.5 w-3.5" />
+              {site.active ? "Deshabilitar" : "Habilitar"}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={handleDelete}
+            >
+              <Trash2 className="mr-2 h-3.5 w-3.5" />
+              Eliminar
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   )
 }
 ```
 
-Agregar el import en `settings/page.tsx`:
+---
+
+### `src/components/web/create-site-dialog.tsx` — CREAR
+
 ```tsx
-import { AuditLogSection } from "@/components/dashboard/audit-log"
+"use client"
+
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Loader2, Plus, X } from "lucide-react"
+
+interface CreateSiteDialogProps {
+  onClose: () => void
+  onCreate: (data: { domain: string; rootPath: string; phpVersion?: string }) => Promise<void>
+}
+
+export function CreateSiteDialog({ onClose, onCreate }: CreateSiteDialogProps) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [form, setForm] = useState({
+    domain: "",
+    rootPath: "/var/www/",
+    phpVersion: "",
+  })
+
+  function handleDomainChange(value: string) {
+    setForm((f) => ({
+      ...f,
+      domain: value,
+      rootPath: `/var/www/${value || ""}`,
+    }))
+  }
+
+  async function handleSubmit() {
+    setError("")
+    if (!form.domain) { setError("El dominio es requerido"); return }
+    if (!form.rootPath) { setError("La ruta es requerida"); return }
+
+    setLoading(true)
+    try {
+      await onCreate({
+        domain: form.domain,
+        rootPath: form.rootPath,
+        phpVersion: form.phpVersion || undefined,
+      })
+      onClose()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error al crear el sitio")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-card border border-border rounded-xl w-full max-w-md shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-sm font-semibold">Nuevo sitio web</h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="w-7 h-7 text-muted-foreground"
+            onClick={onClose}
+          >
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+
+        {/* Form */}
+        <div className="px-6 py-5 space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="domain">Dominio</Label>
+            <Input
+              id="domain"
+              placeholder="ejemplo.com"
+              value={form.domain}
+              onChange={(e) => handleDomainChange(e.target.value)}
+              className="bg-input border-border font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rootPath">Ruta del sitio</Label>
+            <Input
+              id="rootPath"
+              placeholder="/var/www/ejemplo.com"
+              value={form.rootPath}
+              onChange={(e) => setForm({ ...form, rootPath: e.target.value })}
+              className="bg-input border-border font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="php">
+              Versión PHP
+              <span className="text-muted-foreground ml-1 text-[10px]">(opcional)</span>
+            </Label>
+            <Input
+              id="php"
+              placeholder="8.2"
+              value={form.phpVersion}
+              onChange={(e) => setForm({ ...form, phpVersion: e.target.value })}
+              className="bg-input border-border text-sm"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-destructive">{error}</p>
+          )}
+
+          {/* Info box */}
+          <div className="bg-secondary/50 border border-border rounded-lg p-3">
+            <p className="text-xs text-muted-foreground">
+              Se creará el virtual host en Nginx y el directorio raíz.
+              Para agregar SSL usa <strong className="text-primary">Byte AI</strong> después de crear el sitio.
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90"
+            onClick={handleSubmit}
+            disabled={loading}
+          >
+            {loading ? (
+              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Creando...</>
+            ) : (
+              <><Plus className="w-3.5 h-3.5 mr-1.5" />Crear sitio</>
+            )}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+```
+
+---
+
+## Parte 4 — Página del módulo Web
+
+### `src/app/(dashboard)/web/page.tsx` — REEMPLAZAR
+
+```tsx
+"use client"
+
+import { useState, useEffect, useCallback } from "react"
+import { SiteCard } from "@/components/web/site-card"
+import { CreateSiteDialog } from "@/components/web/create-site-dialog"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Globe, Plus, RefreshCw } from "lucide-react"
+
+interface Site {
+  id: string
+  domain: string
+  rootPath: string
+  phpVersion?: string | null
+  ssl: boolean
+  active: boolean
+  createdAt: string
+}
+
+export default function WebPage() {
+  const [sites, setSites] = useState<Site[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [error, setError] = useState("")
+
+  const fetchSites = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch("/api/web/sites")
+      const data = await res.json()
+      setSites(data.sites ?? [])
+    } catch {
+      setError("Error al cargar los sitios")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchSites() }, [fetchSites])
+
+  async function handleCreate(formData: { domain: string; rootPath: string; phpVersion?: string }) {
+    const res = await fetch("/api/web/sites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? "Error al crear el sitio")
+    await fetchSites()
+  }
+
+  async function handleToggle(id: string, active: boolean) {
+    await fetch(`/api/web/sites/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active }),
+    })
+    await fetchSites()
+  }
+
+  async function handleDelete(id: string) {
+    await fetch(`/api/web/sites/${id}`, { method: "DELETE" })
+    await fetchSites()
+  }
+
+  const activeSites   = sites.filter((s) => s.active)
+  const inactiveSites = sites.filter((s) => !s.active)
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Servidor Web</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Gestión de sitios Nginx, virtual hosts y SSL
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="w-8 h-8 text-muted-foreground"
+            onClick={fetchSites}
+            disabled={loading}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          </Button>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90 h-8"
+            onClick={() => setShowCreate(true)}
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Nuevo sitio
+          </Button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: "Total",    value: sites.length,        className: "" },
+          { label: "Activos",  value: activeSites.length,  className: "text-primary" },
+          { label: "SSL",      value: sites.filter((s) => s.ssl).length, className: "text-accent" },
+        ].map((stat) => (
+          <div key={stat.label} className="bg-card border border-border rounded-lg px-4 py-3">
+            <p className="text-xs text-muted-foreground">{stat.label}</p>
+            <p className={`text-2xl font-semibold mt-1 ${stat.className}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
+      )}
+
+      {/* Lista de sitios */}
+      {loading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="bg-card border border-border rounded-lg p-5 h-16 animate-pulse" />
+          ))}
+        </div>
+      ) : sites.length === 0 ? (
+        <div className="bg-card border border-border rounded-lg p-12 flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-lg bg-muted border border-border flex items-center justify-center">
+            <Globe className="w-6 h-6 text-muted-foreground" />
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-medium">No hay sitios configurados</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Crea tu primer sitio web con el botón "Nuevo sitio"
+            </p>
+          </div>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90"
+            onClick={() => setShowCreate(true)}
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Crear primer sitio
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {activeSites.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Activos
+                </span>
+                <Badge variant="secondary" className="text-[10px] h-4">{activeSites.length}</Badge>
+              </div>
+              {activeSites.map((site) => (
+                <SiteCard
+                  key={site.id}
+                  site={site}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          )}
+
+          {inactiveSites.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Inactivos
+                </span>
+                <Badge variant="secondary" className="text-[10px] h-4">{inactiveSites.length}</Badge>
+              </div>
+              {inactiveSites.map((site) => (
+                <SiteCard
+                  key={site.id}
+                  site={site}
+                  onToggle={handleToggle}
+                  onDelete={handleDelete}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Dialog */}
+      {showCreate && (
+        <CreateSiteDialog
+          onClose={() => setShowCreate(false)}
+          onCreate={handleCreate}
+        />
+      )}
+    </div>
+  )
+}
+```
+
+---
+
+## Parte 5 — Agregar comandos Nginx a la lista blanca del agente
+
+### `agent/server.js` — Agregar a `ALLOWED_COMMANDS`
+
+Buscar el array `ALLOWED_COMMANDS` y agregar estas líneas:
+
+```js
+// Nginx virtual hosts
+/^cat \/etc\/nginx\/sites-available\/[\w\.\-]+$/,
+/^ln -s \/etc\/nginx\/sites-available\/[\w\.\-]+ \/etc\/nginx\/sites-enabled\/[\w\.\-]+$/,
+/^rm \/etc\/nginx\/sites-enabled\/[\w\.\-]+$/,
+/^ls \/etc\/nginx\/sites-(available|enabled)$/,
+
+// Crear directorios web
+/^mkdir -p \/var\/www\/[\w\.\-]+(\/public_html)?$/,
+/^chown -R \$USER:\$USER \/var\/www\/[\w\.\-]+$/,
+
+// Escribir config (via tee)
+/^tee \/etc\/nginx\/sites-available\/[\w\.\-]+$/,
 ```
 
 ---
@@ -546,26 +692,22 @@ import { AuditLogSection } from "@/components/dashboard/audit-log"
 ## Paso final — Verificación y commit
 
 ```bash
-# 1. Reiniciar el agente con la nueva versión
-# Matar el proceso actual:
-lsof -ti:7070 | xargs kill -9
-
-# Iniciar el agente actualizado:
-AGENT_TOKEN="tu_token" node agent/server.js
-# Debe mostrar: tezcaagent v0.2.0
+# 1. Migrar base de datos
+npx prisma migrate dev --name add_website_model
+npx prisma generate
 
 # 2. Build sin errores
 npm run build
 
-# 3. Probar en dev:
-# - Abrir Byte AI
-# - Pedir "Instala nginx" o "¿qué servicios tengo corriendo?"
-# - Confirmar las acciones propuestas
-# - Verificar que se ejecutan y Byte reporta el resultado
+# 3. Verificar en dev:
+# - /web carga con estado vacío y botón "Nuevo sitio"
+# - Crear un sitio — aparece en la lista
+# - Toggle activo/inactivo funciona
+# - Eliminar funciona
 
 # 4. Commit
 git add .
-git commit -m "feat: real command execution with allowlist and audit log"
+git commit -m "feat: web module with nginx site management"
 git push origin main
 ```
 
@@ -573,21 +715,20 @@ git push origin main
 
 ## Notas para el agente
 
-- El endpoint `/execute` del agente usa una lista blanca de regex — nunca ejecuta comandos
-  arbitrarios. Si un comando no hace match con ningún patrón, retorna error 403.
-- En macOS los comandos como `apt install` no funcionan — el agente los rechazará o fallará.
-  Esto es esperado: el agente está diseñado para Linux. En desarrollo en Mac, Byte puede
-  proponer los comandos pero la ejecución real solo funciona en un servidor Linux.
-- El audit log registra TODOS los comandos ejecutados con el userId — importante para
-  producción y compliance.
-- `session.user.id` requiere que el tipo de sesión incluya `id`. Si TypeScript marca error,
-  agregar en `src/types/next-auth.d.ts`:
+- El módulo Web guarda los sitios en SQLite — esto es el registro del panel.
+  La configuración real de Nginx en el servidor la maneja Byte AI via comandos.
+- En Mac el módulo funciona completamente para crear/listar/eliminar sitios en la DB.
+  Los comandos reales de Nginx solo corren en Linux.
+- El diálogo de crear sitio usa un modal CSS puro — no requiere shadcn Dialog para evitar
+  conflictos con el portal de React.
+- `session.user.id` puede requerir el type declaration de next-auth. Si hay error de TypeScript,
+  crear `src/types/next-auth.d.ts`:
   ```typescript
+  import { DefaultSession } from "next-auth"
   declare module "next-auth" {
     interface Session {
       user: { id: string; role: string } & DefaultSession["user"]
     }
   }
   ```
-- El timeout de ejecución es 60 segundos — suficiente para `apt install` pero no para
-  operaciones muy largas. Ajustar si es necesario.
+- El campo `phpVersion` es opcional — para sitios estáticos o Node.js no se necesita.

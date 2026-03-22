@@ -108,7 +108,7 @@ export function ChatMessageItem({ message, onConfirmActions }: ChatMessageProps)
         {message.actionsExecuted && (
           <div className="flex items-center gap-1.5 text-xs text-primary">
             <CheckCircle2 className="w-3 h-3" />
-            Acciones ejecutadas
+            Ejecutado — revisa el resultado abajo
           </div>
         )}
 

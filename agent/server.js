@@ -13,24 +13,38 @@ if (!TOKEN) {
 
 // --- Lista blanca de comandos permitidos --- NUEVO
 const ALLOWED_COMMANDS = [
+  // Gestión de paquetes
+  /^apt(-get)? (install|remove|update|upgrade) -y [\w\s\-\.]+$/,
   /^apt(-get)? install -y [\w\s\-\.]+$/,
-  /^apt(-get)? (remove|update|upgrade) -y [\w\s\-\.]+$/,
   /^yum (install|remove|update) -y [\w\s\-\.]+$/,
   /^dnf (install|remove|update) -y [\w\s\-\.]+$/,
+
+  // Systemctl
   /^systemctl (start|stop|restart|reload|enable|disable|status) [\w\-\.]+$/,
+
+  // Nginx
   /^nginx -t$/,
   /^nginx -s reload$/,
+
+  // MySQL / MariaDB
   /^mysql -e "CREATE DATABASE [\w]+ CHARACTER SET utf8mb4"$/,
   /^mysql -e "CREATE USER '[\w]+'@'localhost' IDENTIFIED BY '[^']+'"$/,
   /^mysql -e "GRANT ALL ON [\w]+\.\* TO '[\w]+'@'localhost'"$/,
   /^mysql -e "FLUSH PRIVILEGES"$/,
   /^mysqldump [\w\s\-\.]+ > [\w\/\-\.]+$/,
+
+  // Certbot / SSL
   /^certbot --nginx -d [\w\.\-]+ --non-interactive --agree-tos -m [\w@\.\-]+$/,
-  /^certbot renew(--dry-run)?$/,
+  /^certbot renew --dry-run$/,
+  /^certbot renew$/,
+
+  // Archivos de configuración (solo escritura en paths permitidos)
   /^mkdir -p \/etc\/(nginx|apache2|mysql|postfix)\//,
   /^mkdir -p \/var\/www\/[\w\-\.]+$/,
   /^chown -R www-data:www-data \/var\/www\/[\w\-\.]+$/,
   /^chmod -R 755 \/var\/www\/[\w\-\.]+$/,
+
+  // Información del sistema (solo lectura)
   /^cat \/var\/log\/(nginx|apache2|mysql|syslog|auth\.log)(\/[\w\-\.]+)?$/,
   /^tail -n \d+ \/var\/log\/(nginx|apache2|mysql|syslog|auth\.log)(\/[\w\-\.]+)?$/,
   /^df -h$/,
@@ -39,7 +53,25 @@ const ALLOWED_COMMANDS = [
   /^ps aux$/,
   /^netstat -tlnp$/,
   /^ss -tlnp$/,
+
+  // ufw firewall
   /^ufw (enable|disable|status|allow|deny) ?[\w\/]*$/,
+
+  // wget / curl para descargas estándar
+  /^wget -O [\w\/\-\.]+ https:\/\/[\w\.\-\/\?=&]+$/,
+
+  // Nginx virtual hosts
+  /^cat \/etc\/nginx\/sites-available\/[\w\.\-]+$/,
+  /^ln -s \/etc\/nginx\/sites-available\/[\w\.\-]+ \/etc\/nginx\/sites-enabled\/[\w\.\-]+$/,
+  /^rm \/etc\/nginx\/sites-enabled\/[\w\.\-]+$/,
+  /^ls \/etc\/nginx\/sites-(available|enabled)$/,
+
+  // Crear directorios web
+  /^mkdir -p \/var\/www\/[\w\.\-]+(\/public_html)?$/,
+  /^chown -R \$USER:\$USER \/var\/www\/[\w\.\-]+$/,
+
+  // Escribir config (via tee)
+  /^tee \/etc\/nginx\/sites-available\/[\w\.\-]+$/,
 ]
 
 function isCommandAllowed(command) {
