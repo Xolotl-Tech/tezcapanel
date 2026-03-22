@@ -51,13 +51,25 @@ install_deps() {
 
 # NODE
 install_node() {
+  if command -v node >/dev/null 2>&1; then
+    log "Node.js ya está instalado: $(node -v)"
+    return
+  fi
+
   log "Instalando Node.js LTS..."
 
-  curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-
   case $OS in
-    ubuntu|debian) apt install -y nodejs ;;
-    centos|almalinux|rocky) yum install -y nodejs ;;
+    ubuntu|debian)
+      curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+      apt install -y nodejs
+      ;;
+    centos|almalinux|rocky)
+      curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+      yum install -y nodejs
+      ;;
+    *)
+      error_exit "Sistema no soportado para instalación de Node"
+      ;;
   esac
 }
 
