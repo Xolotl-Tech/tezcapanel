@@ -36,3 +36,13 @@ model Website {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
+
+model Database {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  user      String
+  host      String   @default("localhost")
+  size      Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
