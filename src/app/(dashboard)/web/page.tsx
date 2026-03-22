@@ -24,17 +24,26 @@ export default function WebPage() {
   const [error, setError] = useState("")
 
   const fetchSites = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch("/api/web/sites")
-      const data = await res.json()
-      setSites(data.sites ?? [])
-    } catch {
+  setLoading(true)
+  setError("") // limpiar error previo
+  try {
+    const res = await fetch("/api/web/sites")
+    if (!res.ok) {
+      if (res.status === 401) {
+        setError("")  // no mostrar error en 401, el middleware redirige
+        return
+      }
       setError("Error al cargar los sitios")
-    } finally {
-      setLoading(false)
+      return
     }
-  }, [])
+    const data = await res.json()
+    setSites(data.sites ?? [])
+  } catch {
+    setError("Error al cargar los sitios")
+  } finally {
+    setLoading(false)
+  }
+}, [])
 
   useEffect(() => { fetchSites() }, [fetchSites])
 
