@@ -1,9 +1,237 @@
 const http = require("http")
 const { exec } = require("child_process")
+const { promisify } = require("util")
+const fs = require("fs")
+const path = require("path")
 const { WebSocketServer } = require("ws")
 const pty = require("node-pty")
 const os = require("os")
 const si = require("systeminformation")
+
+const execAsync = promisify(exec)
+
+// --- Rutas de configuración de correo ---
+const MAIL_VIRTUAL_DOMAINS = "/etc/postfix/virtual_domains"
+const MAIL_VIRTUAL_MAILBOX = "/etc/postfix/virtual_mailbox"
+const MAIL_VIRTUAL_ALIAS   = "/etc/postfix/virtual_alias"
+const DOVECOT_PASSWD       = "/etc/dovecot/passwd"
+const MAIL_BASE            = "/var/mail/vhosts"
+const DKIM_BASE            = "/etc/opendkim/keys"
+
+function readLines(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function writeLines(filePath, lines) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, lines.length ? lines.join("\n") + "\n" : "", "utf8")
+}
+
+function validateEmail(email) {
+  return /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email)
+}
+
+function validateDomain(domain) {
+  return /^[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(domain)
+}
+
+async function handleMailProvision(req, res) {
+  let body = ""
+  req.on("data", chunk => { body += chunk })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body)
+      const { action } = data
+
+      if (!action) {
+        res.writeHead(400)
+        res.end(JSON.stringify({ error: "action requerido" }))
+        return
+      }
+
+      switch (action) {
+
+        // ── Dominios ───────────────────────────────────────────
+        case "add-domain": {
+          const { domain } = data
+          if (!domain || !validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
+          }
+          const lines = readLines(MAIL_VIRTUAL_DOMAINS)
+          if (!lines.includes(domain)) {
+            lines.push(domain)
+            writeLines(MAIL_VIRTUAL_DOMAINS, lines)
+          }
+          fs.mkdirSync(`${MAIL_BASE}/${domain}`, { recursive: true })
+          try {
+            await execAsync(`postmap ${MAIL_VIRTUAL_DOMAINS}`)
+            await execAsync("systemctl reload postfix")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "remove-domain": {
+          const { domain } = data
+          if (!domain || !validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
+          }
+          const lines = readLines(MAIL_VIRTUAL_DOMAINS).filter(l => l.trim() !== domain)
+          writeLines(MAIL_VIRTUAL_DOMAINS, lines)
+          try {
+            await execAsync(`postmap ${MAIL_VIRTUAL_DOMAINS}`)
+            await execAsync("systemctl reload postfix")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        // ── Cuentas ────────────────────────────────────────────
+        case "add-account": {
+          const { email, password, quota_mb = 500 } = data
+          if (!email || !validateEmail(email) || !password) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "email y password requeridos" })); return
+          }
+          if (password.includes(":")) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "La contraseña no puede contener ':'" })); return
+          }
+          const [user, domain] = email.split("@")
+          const mailboxPath    = `${domain}/${user}/`
+          const mailDir        = `${MAIL_BASE}/${mailboxPath}`
+
+          // Postfix virtual_mailbox
+          const mbLines = readLines(MAIL_VIRTUAL_MAILBOX)
+          if (!mbLines.some(l => l.startsWith(`${email}\t`) || l.startsWith(`${email} `))) {
+            mbLines.push(`${email}\t${mailboxPath}`)
+            writeLines(MAIL_VIRTUAL_MAILBOX, mbLines)
+          }
+
+          // Dovecot passwd  — formato: user:pass:uid:gid::home::quota_rule
+          const passwdEntry = `${email}:{PLAIN}${password}:5000:5000::${mailDir}::userdb_quota_rule=*:storage=${quota_mb}M`
+          const passwdLines = readLines(DOVECOT_PASSWD)
+          if (!passwdLines.some(l => l.startsWith(`${email}:`))) {
+            passwdLines.push(passwdEntry)
+            writeLines(DOVECOT_PASSWD, passwdLines)
+          }
+
+          // Crear directorio del buzón
+          fs.mkdirSync(mailDir, { recursive: true })
+          try {
+            await execAsync(`chown -R 5000:5000 ${MAIL_BASE}`)
+            await execAsync(`postmap ${MAIL_VIRTUAL_MAILBOX}`)
+            await execAsync("systemctl reload postfix")
+            await execAsync("systemctl reload dovecot")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "remove-account": {
+          const { email } = data
+          if (!email || !validateEmail(email)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "email inválido" })); return
+          }
+          const mbLines = readLines(MAIL_VIRTUAL_MAILBOX).filter(l => !l.startsWith(`${email}\t`) && !l.startsWith(`${email} `))
+          writeLines(MAIL_VIRTUAL_MAILBOX, mbLines)
+          const passwdLines = readLines(DOVECOT_PASSWD).filter(l => !l.startsWith(`${email}:`))
+          writeLines(DOVECOT_PASSWD, passwdLines)
+          try {
+            await execAsync(`postmap ${MAIL_VIRTUAL_MAILBOX}`)
+            await execAsync("systemctl reload postfix")
+            await execAsync("systemctl reload dovecot")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "update-password": {
+          const { email, password } = data
+          if (!email || !validateEmail(email) || !password) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "email y password requeridos" })); return
+          }
+          if (password.includes(":")) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "La contraseña no puede contener ':'" })); return
+          }
+          const passwdLines = readLines(DOVECOT_PASSWD).map(l => {
+            if (!l.startsWith(`${email}:`)) return l
+            const parts = l.split(":")
+            parts[1] = `{PLAIN}${password}`
+            return parts.join(":")
+          })
+          writeLines(DOVECOT_PASSWD, passwdLines)
+          try { await execAsync("systemctl reload dovecot") } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        // ── Aliases ────────────────────────────────────────────
+        case "add-alias": {
+          const { source, destination } = data
+          if (!source || !validateEmail(source) || !destination || !validateEmail(destination)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "source y destination requeridos" })); return
+          }
+          const lines = readLines(MAIL_VIRTUAL_ALIAS)
+          if (!lines.some(l => l.startsWith(`${source}\t`) || l.startsWith(`${source} `))) {
+            lines.push(`${source}\t${destination}`)
+            writeLines(MAIL_VIRTUAL_ALIAS, lines)
+          }
+          try {
+            await execAsync(`postmap ${MAIL_VIRTUAL_ALIAS}`)
+            await execAsync("systemctl reload postfix")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "remove-alias": {
+          const { source } = data
+          if (!source || !validateEmail(source)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "source inválido" })); return
+          }
+          const lines = readLines(MAIL_VIRTUAL_ALIAS).filter(l => !l.startsWith(`${source}\t`) && !l.startsWith(`${source} `))
+          writeLines(MAIL_VIRTUAL_ALIAS, lines)
+          try {
+            await execAsync(`postmap ${MAIL_VIRTUAL_ALIAS}`)
+            await execAsync("systemctl reload postfix")
+          } catch {}
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        // ── DKIM ───────────────────────────────────────────────
+        case "gen-dkim": {
+          const { domain } = data
+          if (!domain || !validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
+          }
+          const keyDir = `${DKIM_BASE}/${domain}`
+          fs.mkdirSync(keyDir, { recursive: true })
+          try {
+            await execAsync(`opendkim-genkey -D ${keyDir} -s mail -d ${domain}`)
+            const publicKey = fs.readFileSync(`${keyDir}/mail.txt`, "utf8")
+            res.end(JSON.stringify({ ok: true, public_key: publicKey }))
+          } catch (e) {
+            res.writeHead(500)
+            res.end(JSON.stringify({ error: `opendkim-genkey falló: ${e.message}` }))
+          }
+          break
+        }
+
+        default:
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[mail/provision]", err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
 
 const PORT = 7070
 const HOST = "127.0.0.1"
@@ -135,6 +363,7 @@ async function handleServices(res) {
     { name: "nginx",   check: "nginx" },
     { name: "mysql",   check: "mysqld" },
     { name: "postfix", check: "postfix" },
+    { name: "dovecot", check: "dovecot" },
     { name: "named",   check: "named" },
   ]
 
@@ -244,6 +473,8 @@ const server = http.createServer(async (req, res) => {
     } else if (method === "POST" && url.startsWith("/services/") && url.endsWith("/restart")) {
       const name = url.split("/")[2]
       await handleRestartService(name, res)
+    } else if (method === "POST" && url === "/mail/provision") {
+      await handleMailProvision(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))

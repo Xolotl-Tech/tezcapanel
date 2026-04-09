@@ -55,3 +55,33 @@ model Notification {
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 }
+
+model MailDomain {
+  id        String   @id @default(cuid())
+  domain    String   @unique
+  dkim      String?
+  spf       String?
+  dmarc     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MailAccount {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  quotaMB   Int      @default(500)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MailAlias {
+  id          String   @id @default(cuid())
+  source      String   @unique
+  destination String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
