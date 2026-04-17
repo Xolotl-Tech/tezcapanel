@@ -15,7 +15,6 @@ PANEL_PORT="8080"
 AGENT_PORT="7070"
 AGENT_WS_PORT="7071"
 
-# --- Colores ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -32,7 +31,6 @@ header() { echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━
 # 1. Verificar root
 # =============================================================================
 header "Verificando requisitos"
-
 [ "$EUID" -ne 0 ] && error "Ejecuta como root: sudo bash install.sh"
 log "Corriendo como root"
 
@@ -60,7 +58,6 @@ case $DISTRO in
     PKG_MANAGER="dnf"
     PKG_UPDATE="dnf update -y"
     PKG_INSTALL="dnf install -y"
-    # En CentOS 7 usar yum
     if ! command -v dnf &>/dev/null; then
       PKG_MANAGER="yum"
       PKG_UPDATE="yum update -y"
@@ -68,15 +65,14 @@ case $DISTRO in
     fi
     ;;
   *)
-    error "Distro no soportada: $DISTRO. Soportadas: Ubuntu, Debian, Rocky Linux, AlmaLinux, RHEL"
+    error "Distro no soportada: $DISTRO"
     ;;
 esac
 
 # =============================================================================
-# 3. Instalar dependencias del sistema
+# 3. Dependencias del sistema
 # =============================================================================
 header "Instalando dependencias del sistema"
-
 $PKG_UPDATE
 
 case $DISTRO in
@@ -85,17 +81,15 @@ case $DISTRO in
     ;;
   rhel|centos|rocky|almalinux|fedora)
     $PKG_INSTALL curl wget git gcc-c++ make
-    # EPEL para Rocky/AlmaLinux
     if [[ "$DISTRO" == "rocky" || "$DISTRO" == "almalinux" ]]; then
       $PKG_INSTALL epel-release || true
     fi
     ;;
 esac
-
 log "Dependencias instaladas"
 
 # =============================================================================
-# 4. Instalar Node.js 20 LTS
+# 4. Node.js 20 LTS
 # =============================================================================
 header "Instalando Node.js $NODE_VERSION LTS"
 
@@ -104,7 +98,7 @@ if command -v node &>/dev/null; then
   if [ "$CURRENT_NODE" -ge "$NODE_VERSION" ]; then
     log "Node.js $(node -v) ya está instalado"
   else
-    warn "Node.js $(node -v) instalado pero se requiere v$NODE_VERSION+"
+    warn "Node.js $(node -v) requiere v$NODE_VERSION+"
     INSTALL_NODE=true
   fi
 else
@@ -112,7 +106,6 @@ else
 fi
 
 if [ "$INSTALL_NODE" = true ]; then
-  info "Instalando Node.js $NODE_VERSION via NodeSource..."
   case $DISTRO in
     ubuntu|debian)
       curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
@@ -120,15 +113,12 @@ if [ "$INSTALL_NODE" = true ]; then
       ;;
     rhel|centos|rocky|almalinux|fedora)
       curl -fsSL https://rpm.nodesource.com/setup_${NODE_VERSION}.x | bash -
-      $PKG_INSTALL nodejs
-      # node-pty requiere python3 y make
-      $PKG_INSTALL python3 make gcc-c++
+      $PKG_INSTALL nodejs python3 make gcc-c++
       ;;
   esac
 fi
 
 log "Node.js $(node -v) listo"
-log "npm $(npm -v) listo"
 
 # =============================================================================
 # 5. Clonar / actualizar repositorio
@@ -137,8 +127,7 @@ header "Descargando Tezcapanel"
 
 if [ -d "$APP_DIR/.git" ]; then
   info "Actualizando instalación existente..."
-  cd $APP_DIR
-  git pull origin main
+  cd $APP_DIR && git pull origin main
   log "Repositorio actualizado"
 else
   info "Clonando repositorio..."
@@ -151,51 +140,34 @@ fi
 cd $APP_DIR
 
 # =============================================================================
-# 6. Instalar dependencias npm
+# 6. Dependencias npm
 # =============================================================================
 header "Instalando dependencias npm"
-
 npm install --production=false
-log "Dependencias instaladas"
-
-# Recompilar node-pty para la versión de Node instalada
 info "Compilando módulos nativos..."
 npm rebuild node-pty
-log "Módulos nativos compilados"
+log "Dependencias instaladas"
 
 # =============================================================================
-# 7. Configurar variables de entorno
+# 7. Variables de entorno
 # =============================================================================
 header "Configurando entorno"
 
 if [ ! -f "$APP_DIR/.env" ]; then
-  info "Generando tokens de seguridad..."
-
   AUTH_SECRET=$(openssl rand -base64 32)
   AGENT_TOKEN=$(openssl rand -hex 32)
 
   cat > $APP_DIR/.env << EOF
-# Base de datos
 DATABASE_URL="file:$APP_DIR/prisma/prod.db"
-
-# Auth
 AUTH_SECRET="$AUTH_SECRET"
-
-# Agente
 AGENT_URL="http://127.0.0.1:$AGENT_PORT"
 AGENT_TOKEN="$AGENT_TOKEN"
-
-# Entorno
 NODE_ENV="production"
 PORT=$PANEL_PORT
 EOF
-
   log "Archivo .env generado"
-  log "AUTH_SECRET generado automáticamente"
-  log "AGENT_TOKEN generado automáticamente"
 else
   warn ".env ya existe — no se sobreescribió"
-  # Leer token existente
   AGENT_TOKEN=$(grep AGENT_TOKEN $APP_DIR/.env | cut -d'"' -f2)
 fi
 
@@ -203,27 +175,23 @@ fi
 # 8. Base de datos
 # =============================================================================
 header "Inicializando base de datos"
-
 cd $APP_DIR
 npx prisma migrate deploy
 npx prisma generate
 log "Base de datos inicializada"
 
 # =============================================================================
-# 9. Build de producción
+# 9. Build
 # =============================================================================
 header "Compilando Tezcapanel"
-
-cd $APP_DIR
 npm run build
 log "Build completado"
 
 # =============================================================================
-# 10. Crear servicios systemd
+# 10. Servicios systemd
 # =============================================================================
 header "Configurando servicios del sistema"
 
-# Servicio del panel (Next.js)
 cat > /etc/systemd/system/tezcapanel.service << EOF
 [Unit]
 Description=Tezcapanel Panel
@@ -242,7 +210,6 @@ EnvironmentFile=$APP_DIR/.env
 WantedBy=multi-user.target
 EOF
 
-# Servicio del agente
 cat > /etc/systemd/system/tezcaagent.service << EOF
 [Unit]
 Description=Tezcapanel Agent
@@ -266,7 +233,7 @@ systemctl enable tezcapanel tezcaagent
 log "Servicios systemd creados"
 
 # =============================================================================
-# 11. Configurar firewall
+# 11. Firewall
 # =============================================================================
 header "Configurando firewall"
 
@@ -274,31 +241,46 @@ if command -v ufw &>/dev/null; then
   ufw allow $PANEL_PORT/tcp
   ufw allow 22/tcp
   ufw --force enable
-  log "UFW configurado (puerto $PANEL_PORT abierto)"
+  log "UFW configurado"
 elif command -v firewall-cmd &>/dev/null; then
   firewall-cmd --permanent --add-port=$PANEL_PORT/tcp
   firewall-cmd --reload
-  log "firewalld configurado (puerto $PANEL_PORT abierto)"
+  log "firewalld configurado"
 else
   warn "No se detectó firewall — abre el puerto $PANEL_PORT manualmente"
 fi
 
 # =============================================================================
-# 12. CLI de administración
+# 12. CLI
 # =============================================================================
 header "Instalando CLI"
 
 cat > /usr/local/bin/tezcapanel << 'CLIEOF'
 #!/bin/bash
+
+APP_DIR="/opt/tezcapanel"
+
 case "$1" in
-  start)    systemctl start tezcapanel tezcaagent ;;
-  stop)     systemctl stop tezcapanel tezcaagent ;;
-  restart)  systemctl restart tezcapanel tezcaagent ;;
-  status)   systemctl status tezcapanel tezcaagent ;;
-  logs)     journalctl -u tezcapanel -f ;;
-  agent)    journalctl -u tezcaagent -f ;;
+  start)
+    systemctl start tezcapanel tezcaagent
+    ;;
+  stop)
+    systemctl stop tezcapanel tezcaagent
+    ;;
+  restart)
+    systemctl restart tezcapanel tezcaagent
+    ;;
+  status)
+    systemctl status tezcapanel tezcaagent
+    ;;
+  logs)
+    journalctl -u tezcapanel -f
+    ;;
+  agent)
+    journalctl -u tezcaagent -f
+    ;;
   update)
-    cd /opt/tezcapanel
+    cd $APP_DIR
     git pull origin main
     npm install
     npm rebuild node-pty
@@ -307,14 +289,51 @@ case "$1" in
     systemctl restart tezcapanel tezcaagent
     echo "✔ Tezcapanel actualizado"
     ;;
+  reset-password)
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Restablecer contraseña de administrador"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    read -p "Email del admin: " ADMIN_EMAIL
+    read -s -p "Nueva contraseña (mín. 8 caracteres): " NEW_PASS
+    echo ""
+
+    if [ ${#NEW_PASS} -lt 8 ]; then
+      echo "❌ La contraseña debe tener al menos 8 caracteres"
+      exit 1
+    fi
+
+    HASHED=$(node -e "
+      const bcrypt = require('bcryptjs');
+      bcrypt.hash('$NEW_PASS', 12).then(h => console.log(h));
+    ")
+
+    node -e "
+      const { PrismaClient } = require('@prisma/client');
+      const prisma = new PrismaClient();
+      prisma.user.update({
+        where: { email: '$ADMIN_EMAIL' },
+        data: { password: '$HASHED' }
+      }).then(u => {
+        console.log('✔ Contraseña actualizada para:', u.email);
+        prisma.\$disconnect();
+      }).catch(e => {
+        console.error('❌ Error:', e.message);
+        prisma.\$disconnect();
+        process.exit(1);
+      });
+    " --require $APP_DIR/node_modules/@prisma/client
+
+    ;;
   *)
-    echo "Uso: tezcapanel {start|stop|restart|status|logs|agent|update}"
+    echo "Uso: tezcapanel {start|stop|restart|status|logs|agent|update|reset-password}"
     ;;
 esac
 CLIEOF
 
 chmod +x /usr/local/bin/tezcapanel
-log "CLI instalado — comando: tezcapanel"
+log "CLI instalado"
 
 # =============================================================================
 # 13. Iniciar servicios
@@ -326,7 +345,6 @@ sleep 2
 systemctl restart tezcapanel
 sleep 3
 
-# Verificar que están corriendo
 if systemctl is-active --quiet tezcapanel; then
   log "Panel iniciado correctamente"
 else
@@ -352,10 +370,11 @@ echo ""
 echo -e "  Panel:    ${BLUE}http://$IP:$PANEL_PORT${NC}"
 echo ""
 echo -e "  Comandos útiles:"
-echo -e "  ${YELLOW}tezcapanel status${NC}   — ver estado"
-echo -e "  ${YELLOW}tezcapanel logs${NC}     — ver logs del panel"
-echo -e "  ${YELLOW}tezcapanel agent${NC}    — ver logs del agente"
-echo -e "  ${YELLOW}tezcapanel update${NC}   — actualizar a la última versión"
+echo -e "  ${YELLOW}tezcapanel status${NC}          — ver estado"
+echo -e "  ${YELLOW}tezcapanel logs${NC}            — ver logs del panel"
+echo -e "  ${YELLOW}tezcapanel agent${NC}           — ver logs del agente"
+echo -e "  ${YELLOW}tezcapanel update${NC}          — actualizar"
+echo -e "  ${YELLOW}tezcapanel reset-password${NC}  — restablecer contraseña admin"
 echo ""
 echo -e "  Al abrir el panel por primera vez se te pedirá"
 echo -e "  crear tu cuenta de administrador."
