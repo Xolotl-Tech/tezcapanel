@@ -18,6 +18,10 @@ const DOVECOT_PASSWD       = "/etc/dovecot/passwd"
 const MAIL_BASE            = "/var/mail/vhosts"
 const DKIM_BASE            = "/etc/opendkim/keys"
 
+// --- DNS (BIND9) ---
+const BIND_ZONES_DIR       = "/etc/bind/zones"
+const BIND_NAMED_LOCAL     = "/etc/bind/named.conf.local"
+
 function readLines(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8").split("\n").filter(Boolean)
@@ -227,6 +231,137 @@ async function handleMailProvision(req, res) {
       }
     } catch (err) {
       console.error("[mail/provision]", err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// ─── DNS (BIND9) provisioning ─────────────────────────────────────
+function renderZoneFile(zone) {
+  const { domain, primaryNs, adminEmail, serial, refresh, retry, expire, minimum, defaultTtl, records } = zone
+
+  const header = [
+    `; Zona generada por Tezcapanel — ${new Date().toISOString()}`,
+    `$TTL ${defaultTtl}`,
+    `@   IN  SOA  ${primaryNs} ${adminEmail} (`,
+    `        ${serial}  ; serial`,
+    `        ${refresh}  ; refresh`,
+    `        ${retry}  ; retry`,
+    `        ${expire}  ; expire`,
+    `        ${minimum}  ; minimum`,
+    `)`,
+    ``,
+  ].join("\n")
+
+  const lines = (records || []).map((r) => {
+    const name = r.name === "" ? "@" : r.name
+    const ttl  = r.ttl ? `${r.ttl}` : ""
+    if (r.type === "MX" || r.type === "SRV") {
+      return `${name}\t${ttl}\tIN\t${r.type}\t${r.priority ?? 10}\t${r.value}`
+    }
+    if (r.type === "TXT") {
+      const v = r.value.startsWith("\"") ? r.value : `"${r.value.replace(/"/g, "\\\"")}"`
+      return `${name}\t${ttl}\tIN\tTXT\t${v}`
+    }
+    return `${name}\t${ttl}\tIN\t${r.type}\t${r.value}`
+  }).join("\n")
+
+  return header + lines + "\n"
+}
+
+function ensureZoneDeclaration(domain) {
+  const file = `${BIND_ZONES_DIR}/db.${domain}`
+  let content = ""
+  try { content = fs.readFileSync(BIND_NAMED_LOCAL, "utf8") } catch {}
+  const marker = `zone "${domain}"`
+  if (content.includes(marker)) return
+  const block = `\nzone "${domain}" {\n    type master;\n    file "${file}";\n};\n`
+  fs.mkdirSync(path.dirname(BIND_NAMED_LOCAL), { recursive: true })
+  fs.appendFileSync(BIND_NAMED_LOCAL, block, "utf8")
+}
+
+function removeZoneDeclaration(domain) {
+  let content = ""
+  try { content = fs.readFileSync(BIND_NAMED_LOCAL, "utf8") } catch { return }
+  const re = new RegExp(`\\nzone "${domain}"[\\s\\S]*?\\};\\n`, "g")
+  fs.writeFileSync(BIND_NAMED_LOCAL, content.replace(re, ""), "utf8")
+}
+
+async function handleDnsProvision(req, res) {
+  let body = ""
+  req.on("data", chunk => { body += chunk })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body)
+      const { action } = data
+      if (!action) {
+        res.writeHead(400); res.end(JSON.stringify({ error: "action requerido" })); return
+      }
+
+      switch (action) {
+        case "write-zone": {
+          const zone = data.zone
+          if (!zone || !zone.domain || !validateDomain(zone.domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Zona inválida" })); return
+          }
+          fs.mkdirSync(BIND_ZONES_DIR, { recursive: true })
+          const file = `${BIND_ZONES_DIR}/db.${zone.domain}`
+          fs.writeFileSync(file, renderZoneFile(zone), "utf8")
+          ensureZoneDeclaration(zone.domain)
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "remove-zone": {
+          const { domain } = data
+          if (!domain || !validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
+          }
+          try { fs.unlinkSync(`${BIND_ZONES_DIR}/db.${domain}`) } catch {}
+          removeZoneDeclaration(domain)
+          res.end(JSON.stringify({ ok: true }))
+          break
+        }
+
+        case "check-zone": {
+          const { domain } = data
+          if (!domain || !validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
+          }
+          try {
+            const { stdout } = await execAsync(`named-checkzone ${domain} ${BIND_ZONES_DIR}/db.${domain}`)
+            res.end(JSON.stringify({ ok: true, output: stdout.trim() }))
+          } catch (e) {
+            res.writeHead(200) // devolvemos 200 con ok:false para que la UI lo muestre
+            res.end(JSON.stringify({ ok: false, error: (e.stderr || e.message || "").trim() }))
+          }
+          break
+        }
+
+        case "reload": {
+          try {
+            await execAsync("rndc reload")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            // fallback: intentar systemctl
+            try {
+              await execAsync("systemctl reload bind9")
+              res.end(JSON.stringify({ ok: true }))
+            } catch {
+              res.writeHead(500)
+              res.end(JSON.stringify({ ok: false, error: e.message }))
+            }
+          }
+          break
+        }
+
+        default:
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[dns/provision]", err)
       res.writeHead(500)
       res.end(JSON.stringify({ error: err.message }))
     }
@@ -475,6 +610,8 @@ const server = http.createServer(async (req, res) => {
       await handleRestartService(name, res)
     } else if (method === "POST" && url === "/mail/provision") {
       await handleMailProvision(req, res)
+    } else if (method === "POST" && url === "/dns/provision") {
+      await handleDnsProvision(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))

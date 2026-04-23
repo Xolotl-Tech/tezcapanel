@@ -95,6 +95,57 @@ model MailAlias {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+model DnsProvider {
+  id          String    @id @default(cuid())
+  type        String    // bind | cloudflare | route53 | godaddy | namecheap | namesilo | porkbun
+  alias       String
+  account     String?   // display only — email, "API Token", etc
+  config      String    @default("{}") // JSON con credenciales
+  status      Boolean   @default(true)
+  permission  String    @default("global") // "global" o JSON con dominios
+  isBuiltIn   Boolean   @default(false)
+  zones       DnsZone[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model DnsZone {
+  id          String       @id @default(cuid())
+  domain      String       @unique
+  providerId  String?
+  provider    DnsProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  primaryNs   String       @default("ns1.localhost.")
+  adminEmail  String       @default("admin.localhost.")
+  serial      Int          @default(1)
+  refresh     Int          @default(3600)
+  retry       Int          @default(1800)
+  expire      Int          @default(1209600)
+  minimum     Int          @default(86400)
+  defaultTtl  Int          @default(3600)
+  active      Boolean      @default(true)
+  records     DnsRecord[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([providerId])
+}
+
+model DnsRecord {
+  id        String   @id @default(cuid())
+  zoneId    String
+  zone      DnsZone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  type      String
+  name      String
+  value     String
+  ttl       Int      @default(3600)
+  priority  Int?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([zoneId])
+}
+
 model NotificationPreferences {
   id                    String   @id @default(cuid())
   userId                String   @unique

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "create-admin": "tsx scripts/create-admin.ts",
+    "encrypt-secrets": "tsx scripts/encrypt-secrets.ts",
     "agent": "AGENT_TOKEN=$AGENT_TOKEN node agent/server.js",
     "agent:dev": "AGENT_TOKEN=$AGENT_TOKEN node --watch agent/server.js"
   },

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { mailAgent } from "@/lib/mail-agent"
+import { encrypt } from "@/lib/crypto"
 
 export async function PATCH(
   req: NextRequest,
@@ -29,7 +30,7 @@ export async function PATCH(
     const updated = await prisma.mailAccount.update({
       where: { id },
       data: {
-        ...(password !== undefined && { password }),
+        ...(password !== undefined && { password: encrypt(password) }),
         ...(quotaMB  !== undefined && { quotaMB }),
         ...(active   !== undefined && { active }),
       },

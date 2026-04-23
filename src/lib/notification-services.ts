@@ -1,10 +1,11 @@
 import { prisma } from "./prisma"
+import { decrypt } from "./crypto"
 
 /**
- * Obtener credenciales de un usuario
+ * Obtener credenciales de un usuario (con secretos descifrados)
  */
 async function getUserCredentials(userId: string) {
-  return prisma.notificationPreferences.findUnique({
+  const raw = await prisma.notificationPreferences.findUnique({
     where: { userId },
     select: {
       telegramBotToken: true,
@@ -15,6 +16,15 @@ async function getUserCredentials(userId: string) {
       sendgridFromEmail: true,
     },
   })
+  if (!raw) return null
+  return {
+    telegramBotToken:  decrypt(raw.telegramBotToken)  || null,
+    twilioAccountSid:  decrypt(raw.twilioAccountSid)  || null,
+    twilioAuthToken:   decrypt(raw.twilioAuthToken)   || null,
+    twilioPhoneNumber: raw.twilioPhoneNumber,
+    sendgridApiKey:    decrypt(raw.sendgridApiKey)    || null,
+    sendgridFromEmail: raw.sendgridFromEmail,
+  }
 }
 
 /**

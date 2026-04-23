@@ -2,13 +2,17 @@ import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { mailAgent } from "@/lib/mail-agent"
+import { encrypt } from "@/lib/crypto"
 
 export async function GET() {
   try {
     const session = await auth()
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const accounts = await prisma.mailAccount.findMany({ orderBy: { createdAt: "desc" } })
+    const accounts = await prisma.mailAccount.findMany({
+      orderBy: { createdAt: "desc" },
+      select: { id: true, email: true, quotaMB: true, active: true, createdAt: true, updatedAt: true },
+    })
     return NextResponse.json({ accounts })
   } catch (err) {
     console.error("[mail/accounts GET]", err)
@@ -44,7 +48,9 @@ export async function POST(req: NextRequest) {
     if (existing) return NextResponse.json({ error: "El correo ya existe" }, { status: 409 })
 
     const quota = quotaMB ?? 500
-    const record = await prisma.mailAccount.create({ data: { email, password, quotaMB: quota } })
+    const record = await prisma.mailAccount.create({
+      data: { email, password: encrypt(password), quotaMB: quota },
+    })
 
     await prisma.auditLog.create({
       data: {

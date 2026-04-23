@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { encryptOptional } from "@/lib/crypto"
 
 // GET — obtener credenciales (sin exponer tokens completos)
 export async function GET() {
@@ -62,25 +63,20 @@ export async function PATCH(req: NextRequest) {
     )
   }
 
+  const secretFields = {
+    telegramBotToken:  encryptOptional(telegramBotToken),
+    twilioAccountSid:  encryptOptional(twilioAccountSid),
+    twilioAuthToken:   encryptOptional(twilioAuthToken),
+    sendgridApiKey:    encryptOptional(sendgridApiKey),
+    // Display-only, sin cifrar
+    twilioPhoneNumber: twilioPhoneNumber || null,
+    sendgridFromEmail: sendgridFromEmail || null,
+  }
+
   const prefs = await prisma.notificationPreferences.upsert({
-    where: { userId: session.user.id },
-    create: {
-      userId: session.user.id,
-      telegramBotToken: telegramBotToken || null,
-      twilioAccountSid: twilioAccountSid || null,
-      twilioAuthToken: twilioAuthToken || null,
-      twilioPhoneNumber: twilioPhoneNumber || null,
-      sendgridApiKey: sendgridApiKey || null,
-      sendgridFromEmail: sendgridFromEmail || null,
-    },
-    update: {
-      telegramBotToken: telegramBotToken || null,
-      twilioAccountSid: twilioAccountSid || null,
-      twilioAuthToken: twilioAuthToken || null,
-      twilioPhoneNumber: twilioPhoneNumber || null,
-      sendgridApiKey: sendgridApiKey || null,
-      sendgridFromEmail: sendgridFromEmail || null,
-    },
+    where:  { userId: session.user.id },
+    create: { userId: session.user.id, ...secretFields },
+    update: secretFields,
   })
 
   // Registrar en audit log
