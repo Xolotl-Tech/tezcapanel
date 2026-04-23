@@ -15,6 +15,7 @@ model User {
   role      String   @default("ADMIN")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  notificationPreferences NotificationPreferences?
 }
 
 model AuditLog {
@@ -56,6 +57,15 @@ model Notification {
   createdAt DateTime @default(now())
 }
 
+model NotificationChannel {
+  id        String   @id @default(cuid())
+  type      String   // whatsapp | telegram | slack
+  name      String
+  config    String   // JSON con webhook/token/chatId
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
 model MailDomain {
   id        String   @id @default(cuid())
   domain    String   @unique
@@ -84,4 +94,36 @@ model MailAlias {
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+model NotificationPreferences {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Email settings
+  email                 Boolean  @default(true)
+  emailAddress          String?
+  
+  // Telegram settings
+  telegram              Boolean  @default(false)
+  telegramChatId        String?
+  telegramBotToken      String?
+  
+  // WhatsApp settings (Twilio)
+  whatsapp              Boolean  @default(false)
+  whatsappPhone         String?
+  twilioAccountSid      String?
+  twilioAuthToken       String?
+  twilioPhoneNumber     String?
+  
+  // Slack settings
+  slack                 Boolean  @default(false)
+  slackWebhook          String?
+  
+  // SendGrid settings
+  sendgridApiKey        String?
+  sendgridFromEmail     String?
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
