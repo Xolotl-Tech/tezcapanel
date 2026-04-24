@@ -368,6 +368,470 @@ async function handleDnsProvision(req, res) {
   })
 }
 
+// --- Firewall (UFW) ---
+function sanitizePort(p) {
+  return /^(\d{1,5})(:\d{1,5})?$/.test(String(p)) ? String(p) : null
+}
+function sanitizeProto(p) {
+  return ["tcp", "udp"].includes(String(p)) ? String(p) : null
+}
+function sanitizeSource(s) {
+  if (!s || s === "all" || s === "any") return null
+  return /^[0-9a-fA-F:.\/]+$/.test(String(s)) ? String(s) : null
+}
+
+function ufwRuleArgs(rule) {
+  // rule: {strategy, direction, protocol, port, sourceIp, destPort}
+  const strategy = rule.strategy === "deny" ? "deny" : "allow"
+  const direction = rule.direction === "outbound" ? "out" : "in"
+  const protos = rule.protocol === "both" ? ["tcp", "udp"] : [sanitizeProto(rule.protocol) || "tcp"]
+  const port = sanitizePort(rule.port)
+  const src = sanitizeSource(rule.sourceIp)
+  return protos.map((proto) => {
+    const parts = ["ufw"]
+    parts.push(strategy)
+    parts.push(direction)
+    if (src) parts.push("from", src)
+    if (port) parts.push("to", "any", "port", port.replace(":", ":"))
+    parts.push("proto", proto)
+    return parts.join(" ")
+  })
+}
+
+function handleFirewallProvision(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+      if (!action) { res.writeHead(400); res.end(JSON.stringify({ error: "action requerido" })); return }
+
+      switch (action) {
+        case "status": {
+          try {
+            const { stdout } = await execAsync("ufw status verbose")
+            const enabled = /Status:\s*active/i.test(stdout)
+            res.end(JSON.stringify({ ok: true, enabled, raw: stdout }))
+          } catch (e) {
+            res.end(JSON.stringify({ ok: false, enabled: false, error: e.message }))
+          }
+          break
+        }
+        case "enable": {
+          try { await execAsync("ufw --force enable"); res.end(JSON.stringify({ ok: true })) }
+          catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "disable": {
+          try { await execAsync("ufw disable"); res.end(JSON.stringify({ ok: true })) }
+          catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "block-icmp": {
+          const enabled = !!data.enabled
+          try {
+            const cfg = "/etc/ufw/before.rules"
+            let content = fs.readFileSync(cfg, "utf8")
+            const marker = "# ok icmp codes for INPUT"
+            if (enabled) {
+              content = content.replace(/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/g,
+                "-A ufw-before-input -p icmp --icmp-type echo-request -j DROP")
+            } else {
+              content = content.replace(/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/g,
+                "-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT")
+            }
+            fs.writeFileSync(cfg, content)
+            await execAsync("ufw reload")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message }))
+          }
+          break
+        }
+        case "add-rule": {
+          const cmds = ufwRuleArgs(data.rule || {})
+          if (!cmds.length) { res.writeHead(400); res.end(JSON.stringify({ error: "regla inválida" })); return }
+          try {
+            for (const c of cmds) await execAsync(c)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message }))
+          }
+          break
+        }
+        case "delete-rule": {
+          const cmds = ufwRuleArgs(data.rule || {}).map((c) => c.replace(/^ufw /, "ufw delete "))
+          try {
+            for (const c of cmds) { try { await execAsync(c) } catch {} }
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message }))
+          }
+          break
+        }
+        case "listening-ports": {
+          try {
+            const { stdout } = await execAsync("ss -tulnH 2>/dev/null || ss -tuln")
+            const ports = new Set()
+            stdout.split("\n").forEach((line) => {
+              const m = line.match(/:(\d+)\s/)
+              if (m) ports.add(parseInt(m[1], 10))
+            })
+            res.end(JSON.stringify({ ok: true, ports: Array.from(ports) }))
+          } catch (e) {
+            res.end(JSON.stringify({ ok: false, ports: [], error: e.message }))
+          }
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[firewall/provision]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- SSH ---
+const SSHD_CONFIG = "/etc/ssh/sshd_config"
+const AUTH_LOG_CANDIDATES = ["/var/log/auth.log", "/var/log/secure"]
+
+function readSshdConfig() {
+  try { return fs.readFileSync(SSHD_CONFIG, "utf8") } catch { return "" }
+}
+
+function getSshdValue(content, key) {
+  const re = new RegExp(`^\\s*${key}\\s+(\\S+)`, "im")
+  const m = content.match(re)
+  return m ? m[1] : null
+}
+
+function setSshdValue(content, key, value) {
+  const line = `${key} ${value}`
+  const re = new RegExp(`^\\s*#?\\s*${key}\\s+.*$`, "im")
+  if (re.test(content)) return content.replace(re, line)
+  return content.trimEnd() + "\n" + line + "\n"
+}
+
+function findAuthLog() {
+  for (const p of AUTH_LOG_CANDIDATES) {
+    try { fs.accessSync(p, fs.constants.R_OK); return p } catch {}
+  }
+  return null
+}
+
+async function readAuthLog(limit = 200) {
+  const file = findAuthLog()
+  if (!file) return { entries: [], success: 0, failure: 0, successToday: 0, failureToday: 0 }
+  try {
+    const { stdout } = await execAsync(`tail -n 5000 ${file}`)
+    const lines = stdout.split("\n").filter((l) => l.includes("sshd"))
+    const entries = []
+    let success = 0, failure = 0, successToday = 0, failureToday = 0
+    const today = new Date().toISOString().slice(0, 10)
+
+    for (const line of lines) {
+      const acceptMatch = line.match(/Accepted (\S+) for (\S+) from (\S+) port (\d+)/)
+      const failMatch = line.match(/Failed (\S+) for (invalid user )?(\S+) from (\S+) port (\d+)/)
+      if (acceptMatch) {
+        success++
+        const ts = parseSyslogDate(line)
+        if (ts && ts.slice(0, 10) === today) successToday++
+        entries.push({ status: "success", method: acceptMatch[1], user: acceptMatch[2], ip: acceptMatch[3], port: acceptMatch[4], timestamp: ts })
+      } else if (failMatch) {
+        failure++
+        const ts = parseSyslogDate(line)
+        if (ts && ts.slice(0, 10) === today) failureToday++
+        entries.push({ status: "failure", method: failMatch[1], user: failMatch[3], ip: failMatch[4], port: failMatch[5], timestamp: ts })
+      }
+    }
+    return { entries: entries.slice(-limit).reverse(), success, failure, successToday, failureToday }
+  } catch {
+    return { entries: [], success: 0, failure: 0, successToday: 0, failureToday: 0 }
+  }
+}
+
+function parseSyslogDate(line) {
+  const m = line.match(/^(\w{3})\s+(\d{1,2})\s+(\d{2}:\d{2}:\d{2})/)
+  if (!m) return null
+  const year = new Date().getFullYear()
+  const d = new Date(`${m[1]} ${m[2]} ${year} ${m[3]}`)
+  return isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+function friendlyAgentError(msg) {
+  if (!msg) return "Error desconocido"
+  if (msg.includes("command not found") && msg.includes("systemctl")) {
+    return "Este sistema no usa systemctl (probablemente entorno de desarrollo en macOS/Windows)"
+  }
+  if (msg.includes("EACCES") || msg.includes("permission denied")) {
+    return "El agente no tiene permisos — necesita ejecutarse como root"
+  }
+  if (msg.includes("ENOENT")) {
+    return "Archivo no encontrado en el sistema"
+  }
+  return msg
+}
+
+function handleSshProvision(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+      if (!action) { res.writeHead(400); res.end(JSON.stringify({ error: "action requerido" })); return }
+
+      switch (action) {
+        case "status": {
+          let running = false
+          try { await execAsync("systemctl is-active --quiet ssh || systemctl is-active --quiet sshd"); running = true }
+          catch { running = false }
+          const content = readSshdConfig()
+          const config = {
+            port: parseInt(getSshdValue(content, "Port") || "22", 10),
+            passwordAuth: (getSshdValue(content, "PasswordAuthentication") || "yes").toLowerCase() === "yes",
+            pubkeyAuth: (getSshdValue(content, "PubkeyAuthentication") || "yes").toLowerCase() === "yes",
+            permitRoot: (getSshdValue(content, "PermitRootLogin") || "prohibit-password").toLowerCase(),
+          }
+          res.end(JSON.stringify({ ok: true, running, config }))
+          break
+        }
+        case "enable": {
+          try {
+            await execAsync("systemctl enable --now ssh 2>/dev/null || systemctl enable --now sshd")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "disable": {
+          try {
+            await execAsync("systemctl disable --now ssh 2>/dev/null || systemctl disable --now sshd")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "update-config": {
+          try {
+            let content = readSshdConfig()
+            if (!content) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: "sshd_config no accesible" })); return }
+            const { port, passwordAuth, pubkeyAuth, permitRoot } = data
+            if (port !== undefined) {
+              const p = parseInt(port, 10)
+              if (!(p >= 1 && p <= 65535)) { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "puerto inválido" })); return }
+              content = setSshdValue(content, "Port", String(p))
+            }
+            if (typeof passwordAuth === "boolean") content = setSshdValue(content, "PasswordAuthentication", passwordAuth ? "yes" : "no")
+            if (typeof pubkeyAuth === "boolean") content = setSshdValue(content, "PubkeyAuthentication", pubkeyAuth ? "yes" : "no")
+            if (permitRoot) {
+              const allowed = ["yes", "no", "prohibit-password", "forced-commands-only"]
+              if (!allowed.includes(permitRoot)) { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "permitRoot inválido" })); return }
+              content = setSshdValue(content, "PermitRootLogin", permitRoot)
+            }
+            fs.writeFileSync(SSHD_CONFIG, content)
+            await execAsync("sshd -t")
+            await execAsync("systemctl reload ssh 2>/dev/null || systemctl reload sshd")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "reset-root-password": {
+          const { password } = data
+          if (!password || typeof password !== "string" || password.length < 8) {
+            res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "password mínimo 8 caracteres" })); return
+          }
+          try {
+            const safe = password.replace(/'/g, "'\\''")
+            await execAsync(`echo 'root:${safe}' | chpasswd`)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "view-root-keys": {
+          try {
+            const keys = fs.existsSync("/root/.ssh/authorized_keys")
+              ? fs.readFileSync("/root/.ssh/authorized_keys", "utf8")
+              : ""
+            res.end(JSON.stringify({ ok: true, keys }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: e.message })) }
+          break
+        }
+        case "logs": {
+          const limit = Math.min(parseInt(data.limit || "200", 10), 1000)
+          res.end(JSON.stringify({ ok: true, ...(await readAuthLog(limit)) }))
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[ssh/provision]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Server security actions ---
+function handleServerSecurityAction(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+      if (!action) { res.writeHead(400); res.end(JSON.stringify({ error: "action requerido" })); return }
+
+      switch (action) {
+        case "set-password-length": {
+          const min = parseInt(data.min, 10)
+          if (!(min >= 1 && min <= 64)) { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "longitud inválida" })); return }
+          try {
+            let content = fs.readFileSync("/etc/login.defs", "utf8")
+            content = /^\s*PASS_MIN_LEN/m.test(content)
+              ? content.replace(/^\s*PASS_MIN_LEN\s+\d+/m, `PASS_MIN_LEN ${min}`)
+              : content.trimEnd() + `\nPASS_MIN_LEN ${min}\n`
+            fs.writeFileSync("/etc/login.defs", content)
+            // sync con pwquality también
+            try {
+              let pq = fs.existsSync("/etc/security/pwquality.conf")
+                ? fs.readFileSync("/etc/security/pwquality.conf", "utf8") : ""
+              pq = /^\s*minlen/m.test(pq)
+                ? pq.replace(/^\s*minlen\s*=\s*\d+/m, `minlen = ${min}`)
+                : pq.trimEnd() + `\nminlen = ${min}\n`
+              fs.writeFileSync("/etc/security/pwquality.conf", pq)
+            } catch {}
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "set-password-complexity": {
+          // level: 0-4 = number of classes required (digit/upper/lower/other)
+          const level = Math.max(0, Math.min(4, parseInt(data.level, 10) || 0))
+          try {
+            let pq = fs.existsSync("/etc/security/pwquality.conf")
+              ? fs.readFileSync("/etc/security/pwquality.conf", "utf8") : ""
+            const fields = { dcredit: -1, ucredit: -1, lcredit: -1, ocredit: -1, minclass: level }
+            if (level === 0) {
+              Object.keys(fields).forEach((k) => { fields[k] = 0 })
+            } else {
+              // activar "level" clases
+              const keys = ["dcredit", "ucredit", "lcredit", "ocredit"]
+              keys.forEach((k, i) => { fields[k] = i < level ? -1 : 0 })
+            }
+            for (const [k, v] of Object.entries(fields)) {
+              const re = new RegExp(`^\\s*#?\\s*${k}\\s*=\\s*-?\\d+`, "m")
+              const line = `${k} = ${v}`
+              pq = re.test(pq) ? pq.replace(re, line) : pq.trimEnd() + "\n" + line + "\n"
+            }
+            fs.writeFileSync("/etc/security/pwquality.conf", pq)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "install-fail2ban": {
+          try {
+            // detectar gestor de paquetes
+            let cmd = "apt-get install -y fail2ban"
+            try { await execAsync("which apt-get") } catch {
+              try { await execAsync("which dnf"); cmd = "dnf install -y fail2ban" }
+              catch { cmd = "yum install -y fail2ban" }
+            }
+            await execAsync(cmd, { timeout: 120000 })
+            await execAsync("systemctl enable --now fail2ban")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "fail2ban-toggle": {
+          const enabled = !!data.enabled
+          try {
+            if (enabled) {
+              await execAsync("systemctl enable --now fail2ban")
+            } else {
+              await execAsync("systemctl disable --now fail2ban")
+            }
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[server-security/action]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Server security checks ---
+function handleServerSecurityCheck(req, res) {
+  req.on("end", async () => {})
+  ;(async () => {
+    try {
+      const content = readSshdConfig()
+      const sshPort = parseInt(getSshdValue(content, "Port") || "22", 10)
+      const permitRoot = (getSshdValue(content, "PermitRootLogin") || "prohibit-password").toLowerCase()
+
+      // Password length from /etc/login.defs
+      let passMinLen = 0
+      try {
+        const defs = fs.readFileSync("/etc/login.defs", "utf8")
+        const m = defs.match(/^\s*PASS_MIN_LEN\s+(\d+)/m)
+        if (m) passMinLen = parseInt(m[1], 10)
+      } catch {}
+
+      // Password complexity: look for pam_pwquality.so in common-password or password-auth
+      let pamComplexity = false
+      let pamMinLen = 0
+      const pamFiles = ["/etc/pam.d/common-password", "/etc/pam.d/password-auth", "/etc/pam.d/system-auth"]
+      for (const f of pamFiles) {
+        try {
+          const c = fs.readFileSync(f, "utf8")
+          if (/pam_pwquality\.so|pam_cracklib\.so/.test(c)) {
+            pamComplexity = true
+            const mm = c.match(/minlen=(\d+)/)
+            if (mm) pamMinLen = Math.max(pamMinLen, parseInt(mm[1], 10))
+          }
+        } catch {}
+      }
+      try {
+        const pq = fs.readFileSync("/etc/security/pwquality.conf", "utf8")
+        const mm = pq.match(/^\s*minlen\s*=\s*(\d+)/m)
+        if (mm) pamMinLen = Math.max(pamMinLen, parseInt(mm[1], 10))
+        if (/^\s*(dcredit|ucredit|lcredit|ocredit)\s*=\s*-?\d+/m.test(pq)) pamComplexity = true
+      } catch {}
+
+      // Fail2ban
+      let fail2banActive = false
+      try {
+        await execAsync("systemctl is-active --quiet fail2ban")
+        fail2banActive = true
+      } catch {}
+      let fail2banInstalled = false
+      try {
+        await execAsync("which fail2ban-client")
+        fail2banInstalled = true
+      } catch {}
+
+      res.end(JSON.stringify({
+        ok: true,
+        sshPort,
+        permitRoot,
+        passMinLen: Math.max(passMinLen, pamMinLen),
+        pamComplexity,
+        fail2banActive,
+        fail2banInstalled,
+      }))
+    } catch (err) {
+      res.writeHead(500)
+      res.end(JSON.stringify({ ok: false, error: err.message }))
+    }
+  })()
+}
+
 const PORT = 7070
 const HOST = "127.0.0.1"
 const TOKEN = process.env.AGENT_TOKEN
@@ -612,6 +1076,14 @@ const server = http.createServer(async (req, res) => {
       await handleMailProvision(req, res)
     } else if (method === "POST" && url === "/dns/provision") {
       await handleDnsProvision(req, res)
+    } else if (method === "POST" && url === "/firewall/provision") {
+      await handleFirewallProvision(req, res)
+    } else if (method === "POST" && url === "/ssh/provision") {
+      await handleSshProvision(req, res)
+    } else if (method === "GET" && url === "/server-security/check") {
+      handleServerSecurityCheck(req, res)
+    } else if (method === "POST" && url === "/server-security/action") {
+      handleServerSecurityAction(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))

@@ -5,7 +5,7 @@ export const navItems: NavItem[] = [
   { label: "Bases de datos", href: "/databases",  icon: "Database" },
   { label: "Correo",         href: "/mail",       icon: "Mail" },
   { label: "DNS",            href: "/dns",        icon: "Server" },
-  { label: "Firewall",       href: "/firewall",   icon: "Shield",  proOnly: true },
+  { label: "Seguridad",      href: "/security",   icon: "Shield" },
   { label: "Backups",        href: "/backups",    icon: "Archive", proOnly: true },
   { label: "Terminal",       href: "/terminal",   icon: "Terminal" },
   { label: "Usuarios",       href: "/users",      icon: "Users" },

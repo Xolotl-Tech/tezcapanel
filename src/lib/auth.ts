@@ -28,7 +28,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) return null
 
         const user = await prisma.user.findUnique({
@@ -43,6 +43,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         )
 
         if (!valid) return null
+
+        try {
+          const headers = (req as unknown as { headers?: Record<string, string | string[] | undefined> })?.headers ?? {}
+          const ipRaw = (headers["x-forwarded-for"] || headers["x-real-ip"] || "") as string
+          const ip = Array.isArray(ipRaw) ? ipRaw[0] : ipRaw.split(",")[0]?.trim()
+          const ua = (headers["user-agent"] as string) || ""
+          await prisma.auditLog.create({
+            data: {
+              userId: user.id,
+              action: "panel_login",
+              metadata: JSON.stringify({ ip: ip || null, userAgent: ua || null }),
+            },
+          })
+        } catch {}
 
         return {
           id: user.id,

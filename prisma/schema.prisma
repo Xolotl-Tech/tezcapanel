@@ -146,6 +146,43 @@ model DnsRecord {
   @@index([zoneId])
 }
 
+model FirewallRule {
+  id        String   @id @default(cuid())
+  kind      String   @default("port") // port | ip | forward | area
+  protocol  String   @default("tcp")  // tcp | udp | both | icmp
+  port      String?                    // "80", "39000:40000"
+  sourceIp  String?                    // "all", CIDR, o IP
+  destIp    String?                    // para forwards
+  destPort  String?                    // para forwards
+  country   String?                    // para area rules (ISO code)
+  direction String   @default("inbound") // inbound | outbound
+  strategy  String   @default("allow") // allow | deny
+  remark    String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind])
+}
+
+model PanelSecuritySettings {
+  id                  String   @id @default("singleton")
+  alertOnSshLogin     Boolean  @default(false)
+  alertOnPanelLogin   Boolean  @default(false)
+  totpEnabled         Boolean  @default(false)
+  unauthStatusCode    Int      @default(404)
+  sslEnabled          Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+}
+
+model FirewallSettings {
+  id          String   @id @default("singleton")
+  enabled     Boolean  @default(false)
+  blockIcmp   Boolean  @default(false)
+  sshPort     Int      @default(22)
+  updatedAt   DateTime @updatedAt
+}
+
 model NotificationPreferences {
   id                    String   @id @default(cuid())
   userId                String   @unique
