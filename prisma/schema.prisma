@@ -312,3 +312,22 @@ model NotificationPreferences {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
+model SshServer {
+  id         String   @id @default(cuid())
+  host       String
+  port       Int      @default(22)
+  username   String   @default("root")
+  authType   String   @default("password") // password | key
+  password   String?
+  privateKey String?
+  remarks    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model SshCommand {
+  id        String   @id @default(cuid())
+  name      String
+  command   String
+  createdAt DateTime @default(now())
+}

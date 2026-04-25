@@ -3,11 +3,29 @@
 import { useEffect, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
 
-interface TerminalEmulatorProps {
-  token: string
+export interface RemoteTarget {
+  host: string
+  port: number
+  username: string
+  authType: "password" | "key"
+  password?: string
+  privateKey?: string
 }
 
-export function TerminalEmulator({ token }: TerminalEmulatorProps) {
+export interface TerminalApi {
+  sendInput: (text: string) => void
+}
+
+interface TerminalEmulatorProps {
+  token: string
+  target: "local" | "ssh"
+  /** Required when target === "ssh". Fetched server-side and passed in. */
+  remote?: RemoteTarget
+  onReady?: (api: TerminalApi) => void
+  onClosed?: () => void
+}
+
+export function TerminalEmulator({ token, target, remote, onReady, onClosed }: TerminalEmulatorProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting")
   const [errorMsg, setErrorMsg] = useState("")
@@ -17,8 +35,10 @@ export function TerminalEmulator({ token }: TerminalEmulatorProps) {
 
   useEffect(() => {
     if (!terminalRef.current || !token) return
+    if (target === "ssh" && !remote) return
 
     let disposed = false
+    let connected = false
 
     async function init() {
       const { Terminal } = await import("@xterm/xterm")
@@ -63,25 +83,56 @@ export function TerminalEmulator({ token }: TerminalEmulatorProps) {
       xtermRef.current = terminal
       fitRef.current = fitAddon
 
-      // Conectar directo al agente WebSocket
-      const ws = new WebSocket(`ws://127.0.0.1:7071?token=${encodeURIComponent(token)}`)
+      const proto = window.location.protocol === "https:" ? "wss" : "ws"
+      const host = window.location.hostname || "127.0.0.1"
+      const ws = new WebSocket(`${proto}://${host}:7071?token=${encodeURIComponent(token)}&target=${target}`)
       wsRef.current = ws
 
       ws.onopen = () => {
         if (disposed) { ws.close(); return }
+        connected = true
         setStatus("connected")
+        onReady?.({
+          sendInput: (text: string) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "input", data: text }))
+            }
+          },
+        })
+        if (target === "ssh" && remote) {
+          ws.send(JSON.stringify({
+            type: "init",
+            host: remote.host,
+            port: remote.port,
+            username: remote.username,
+            authType: remote.authType,
+            password: remote.password,
+            privateKey: remote.privateKey,
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }))
+        }
         ws.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }))
       }
 
       ws.onmessage = (e) => terminal.write(e.data)
 
       ws.onerror = () => {
-        setStatus("error")
-        setErrorMsg("No se pudo conectar al agente. Verifica que tezcaagent esté corriendo.")
+        if (!connected) {
+          setStatus("error")
+          setErrorMsg(`No se pudo conectar al agente en ${host}:7071. Verifica que tezcaagent esté corriendo en el servidor.`)
+        }
       }
 
-      ws.onclose = () => {
-        if (!disposed) terminal.write("\r\n\x1b[31mConexión cerrada\x1b[0m\r\n")
+      ws.onclose = (e) => {
+        if (disposed) return
+        if (e.code === 1008) {
+          setStatus("error")
+          setErrorMsg("Token inválido. El AGENT_TOKEN del panel no coincide con el del agente.")
+          return
+        }
+        terminal.write("\r\n\x1b[31mConexión cerrada\x1b[0m\r\n")
+        if (connected) onClosed?.()
       }
 
       terminal.onData((data) => {
@@ -115,7 +166,7 @@ export function TerminalEmulator({ token }: TerminalEmulatorProps) {
       wsRef.current?.close()
       xtermRef.current?.dispose()
     }
-  }, [token])
+  }, [token, target, remote])
 
   return (
     <div className="relative w-full h-full rounded-lg overflow-hidden bg-[#0d0d0d] border border-border">
@@ -130,11 +181,8 @@ export function TerminalEmulator({ token }: TerminalEmulatorProps) {
 
       {status === "error" && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#0d0d0d] z-10">
-          <div className="text-center space-y-2">
+          <div className="text-center space-y-2 max-w-md px-4">
             <p className="text-sm text-destructive">{errorMsg}</p>
-            <p className="text-xs text-muted-foreground">
-              Corre: <code className="bg-muted px-1 rounded">AGENT_TOKEN=tu_token node agent/server.js</code>
-            </p>
           </div>
         </div>
       )}

@@ -4,6 +4,16 @@ const { promisify } = require("util")
 const fs = require("fs")
 const path = require("path")
 const { WebSocketServer } = require("ws")
+const { Client: SshClient } = require("ssh2")
+// node-pty prebuilt spawn-helper a veces pierde el bit de ejecución al instalarse
+// y rompe pty.spawn con "posix_spawnp failed". Lo aseguramos antes de require.
+try {
+  const helper = path.join(
+    __dirname, "..", "node_modules", "node-pty", "prebuilds",
+    `${process.platform}-${process.arch}`, "spawn-helper",
+  )
+  if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
+} catch {}
 const pty = require("node-pty")
 const os = require("os")
 const si = require("systeminformation")
@@ -2126,17 +2136,105 @@ server.listen(PORT, HOST, () => {
 })
 
 // --- WebSocket Terminal ---
-const wss = new WebSocketServer({ 
-  port: 7071, 
-  host: "127.0.0.1",
-  verifyClient: (info) => {
-    const origin = info.origin || info.req.headers.origin
-    return !origin || 
-           origin === "http://localhost:3000" ||
-           origin.startsWith("http://192.168.") ||
-           origin.startsWith("http://127.0.0.1")
-  }
+const wss = new WebSocketServer({
+  port: 7071,
+  host: "0.0.0.0",
 })
+
+function startLocalPty(ws) {
+  const shell = process.env.SHELL || "/bin/zsh"
+  let ptyProcess
+  try {
+    ptyProcess = pty.spawn(shell, [], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: process.env.HOME || "/tmp",
+      env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
+    })
+  } catch (err) {
+    console.error("PTY error:", err.message)
+    if (ws.readyState === ws.OPEN) ws.send("\r\nError al iniciar terminal: " + err.message + "\r\n")
+    ws.close()
+    return
+  }
+
+  ptyProcess.onData((data) => { if (ws.readyState === ws.OPEN) ws.send(data) })
+
+  ws.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString())
+      if (msg.type === "input") ptyProcess.write(msg.data)
+      else if (msg.type === "resize") ptyProcess.resize(msg.cols, msg.rows)
+    } catch {
+      ptyProcess.write(data.toString())
+    }
+  })
+
+  ws.on("close", () => { try { ptyProcess.kill() } catch {} })
+  ptyProcess.onExit(() => { if (ws.readyState === ws.OPEN) ws.close() })
+
+  console.log("✔ Terminal local conectada")
+}
+
+function startSshSession(ws, opts) {
+  const conn = new SshClient()
+  let stream
+
+  const sendErr = (msg) => {
+    if (ws.readyState === ws.OPEN) ws.send(`\r\n\x1b[31m${msg}\x1b[0m\r\n`)
+  }
+
+  conn.on("ready", () => {
+    conn.shell({ term: "xterm-256color", cols: opts.cols || 80, rows: opts.rows || 24 }, (err, s) => {
+      if (err) {
+        sendErr(`SSH shell error: ${err.message}`)
+        try { conn.end() } catch {}
+        ws.close()
+        return
+      }
+      stream = s
+      stream.on("data", (d) => { if (ws.readyState === ws.OPEN) ws.send(d.toString("utf-8")) })
+      stream.stderr.on("data", (d) => { if (ws.readyState === ws.OPEN) ws.send(d.toString("utf-8")) })
+      stream.on("close", () => { try { conn.end() } catch {}; ws.close() })
+    })
+  })
+
+  conn.on("error", (err) => {
+    sendErr(`SSH error: ${err.message}`)
+    ws.close()
+  })
+
+  ws.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString())
+      if (msg.type === "input" && stream) stream.write(msg.data)
+      else if (msg.type === "resize" && stream) stream.setWindow(msg.rows, msg.cols, 0, 0)
+    } catch {
+      if (stream) stream.write(data.toString())
+    }
+  })
+
+  ws.on("close", () => { try { conn.end() } catch {} })
+
+  try {
+    conn.connect({
+      host: String(opts.host).trim(),
+      port: Number(opts.port) || 22,
+      username: String(opts.username).trim(),
+      ...(opts.authType === "key"
+        ? { privateKey: String(opts.privateKey || "") }
+        : { password: String(opts.password || "") }),
+      readyTimeout: 12000,
+      keepaliveInterval: 30000,
+    })
+  } catch (err) {
+    sendErr(`SSH connect error: ${err.message}`)
+    ws.close()
+  }
+
+  console.log(`✔ Terminal SSH conectada → ${opts.username}@${opts.host}:${opts.port}`)
+}
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost")
@@ -2146,41 +2244,35 @@ wss.on("connection", (ws, req) => {
     return
   }
 
- const shell = process.env.SHELL || "/bin/zsh"
-let ptyProcess
-try {
-  ptyProcess = pty.spawn(shell, [], {
-    name: "xterm-256color",
-    cols: 80,
-    rows: 24,
-    cwd: process.env.HOME || "/tmp",
-    env: { ...process.env, TERM: "xterm-256color", LANG: "en_US.UTF-8" },
-  })
-} catch (err) {
-  console.error("PTY error:", err.message)
-  ws.send("\r\nError al iniciar terminal: " + err.message + "\r\n")
-  ws.close()
-  return
-}
+  const target = (url.searchParams.get("target") || "local").toLowerCase()
 
-  ptyProcess.onData((data) => {
-    if (ws.readyState === ws.OPEN) ws.send(data)
-  })
+  if (target === "local") {
+    startLocalPty(ws)
+    return
+  }
 
-  ws.on("message", (data) => {
-    try {
-      const msg = JSON.parse(data.toString())
-      if (msg.type === "input") ptyProcess.write(msg.data)
-      if (msg.type === "resize") ptyProcess.resize(msg.cols, msg.rows)
-    } catch {
-      ptyProcess.write(data.toString())
+  if (target === "ssh") {
+    // Espera primer mensaje JSON con credenciales: { type: "init", host, port, username, authType, password|privateKey, cols, rows }
+    const onFirst = (data) => {
+      ws.off("message", onFirst)
+      let init
+      try { init = JSON.parse(data.toString()) } catch {
+        if (ws.readyState === ws.OPEN) ws.send("\r\n\x1b[31mInit inválido\x1b[0m\r\n")
+        ws.close()
+        return
+      }
+      if (init.type !== "init" || !init.host || !init.username) {
+        if (ws.readyState === ws.OPEN) ws.send("\r\n\x1b[31mInit incompleto\x1b[0m\r\n")
+        ws.close()
+        return
+      }
+      startSshSession(ws, init)
     }
-  })
+    ws.on("message", onFirst)
+    return
+  }
 
-  ws.on("close", () => ptyProcess.kill())
-  ptyProcess.onExit(() => { if (ws.readyState === ws.OPEN) ws.close() })
-
-  console.log("✔ Terminal conectada")
+  ws.close(1003, "unsupported target")
 })
 
 
