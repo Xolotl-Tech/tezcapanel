@@ -673,6 +673,237 @@ function handleSshProvision(req, res) {
   })
 }
 
+// --- WordPress Toolkit (wp-cli) ---
+let WP_CLI = null
+
+async function detectWpCli() {
+  // 1) ya en PATH
+  try { const { stdout } = await execAsync("command -v wp"); if (stdout.trim()) return stdout.trim() } catch {}
+  // 2) ubicaciones comunes
+  for (const p of ["/usr/local/bin/wp", "/usr/bin/wp", "/opt/wp-cli/wp"]) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p } catch {}
+  }
+  return null
+}
+
+async function ensureWpCli() {
+  if (WP_CLI) {
+    try { await execAsync(`${WP_CLI} --version --allow-root`); return WP_CLI } catch { WP_CLI = null }
+  }
+  const detected = await detectWpCli()
+  if (detected) {
+    WP_CLI = detected
+    return WP_CLI
+  }
+  // intentar instalar (necesita poder escribir en alguno de estos paths)
+  const targets = ["/usr/local/bin/wp", `${process.env.HOME || "/tmp"}/.local/bin/wp`]
+  const tmpFile = "/tmp/wp-cli.phar"
+  try {
+    await execAsync(`curl -sL -o ${tmpFile} https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar`, { timeout: 60000 })
+    fs.chmodSync(tmpFile, 0o755)
+  } catch (e) {
+    throw new Error(`No se pudo descargar wp-cli: ${e.message}`)
+  }
+  for (const t of targets) {
+    try {
+      const dir = path.dirname(t)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.copyFileSync(tmpFile, t)
+      fs.chmodSync(t, 0o755)
+      WP_CLI = t
+      return WP_CLI
+    } catch {}
+  }
+  throw new Error("No se pudo instalar wp-cli en /usr/local/bin/wp ni en ~/.local/bin/wp. El agente debe correr como root o tener un wp-cli pre-instalado en PATH.")
+}
+
+async function wpRun(rootPath, args, timeout = 120000) {
+  if (!WP_CLI) await ensureWpCli()
+  const cmd = `${WP_CLI} --path=${rootPath} --allow-root ${args}`
+  const { stdout, stderr } = await execAsync(cmd, { timeout })
+  return { stdout: stdout.trim(), stderr: stderr.trim() }
+}
+
+function shellEscape(s) {
+  return String(s).replace(/'/g, "'\\''")
+}
+
+function handleWp(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+
+      switch (action) {
+        case "install": {
+          const {
+            domain, rootPath, dbName, dbUser, dbPassword, dbHost = "localhost",
+            adminUser, adminPassword, adminEmail, siteTitle = domain,
+            language = "es_MX", template = "blog",
+          } = data
+
+          if (!domain || !rootPath || !dbName || !dbUser || !dbPassword || !adminUser || !adminPassword || !adminEmail) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "faltan campos requeridos" })); return
+          }
+
+          try {
+            await ensureWpCli()
+            fs.mkdirSync(rootPath, { recursive: true })
+
+            // crear DB y usuario
+            const dbpEsc = shellEscape(dbPassword)
+            await execAsync(`mysql -e "CREATE DATABASE IF NOT EXISTS \\\`${dbName}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"`)
+            await execAsync(`mysql -e "CREATE USER IF NOT EXISTS '${dbUser}'@'${dbHost}' IDENTIFIED BY '${dbpEsc}'"`)
+            await execAsync(`mysql -e "GRANT ALL PRIVILEGES ON \\\`${dbName}\\\`.* TO '${dbUser}'@'${dbHost}'"`)
+            await execAsync(`mysql -e "FLUSH PRIVILEGES"`)
+
+            // descargar core
+            await wpRun(rootPath, `core download --locale=${language} --force`, 180000)
+
+            // wp-config
+            await wpRun(rootPath, `config create --dbname='${dbName}' --dbuser='${dbUser}' --dbpass='${dbpEsc}' --dbhost='${dbHost}' --skip-check --force`)
+
+            // install
+            const titleEsc = shellEscape(siteTitle)
+            const apEsc = shellEscape(adminPassword)
+            await wpRun(rootPath, `core install --url='https://${domain}' --title='${titleEsc}' --admin_user='${adminUser}' --admin_password='${apEsc}' --admin_email='${adminEmail}' --skip-email`, 180000)
+
+            // permisos
+            try {
+              await execAsync(`chown -R www-data:www-data ${rootPath}`)
+            } catch {}
+
+            // template extras
+            if (template === "ecommerce") {
+              await wpRun(rootPath, `plugin install woocommerce --activate`, 180000)
+              await wpRun(rootPath, `theme install storefront --activate`, 120000)
+            } else if (template === "landing") {
+              await wpRun(rootPath, `theme install astra --activate`, 120000)
+            }
+
+            // datos finales
+            const ver = await wpRun(rootPath, "core version").catch(() => ({ stdout: "" }))
+            res.end(JSON.stringify({ ok: true, version: ver.stdout }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
+        case "info": {
+          const { rootPath } = data
+          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          try {
+            await ensureWpCli()
+            const [ver, plugins, themes] = await Promise.all([
+              wpRun(rootPath, "core version").catch(() => ({ stdout: "" })),
+              wpRun(rootPath, "plugin list --status=active --format=count").catch(() => ({ stdout: "0" })),
+              wpRun(rootPath, "theme list --format=count").catch(() => ({ stdout: "0" })),
+            ])
+            let diskMB = 0
+            try {
+              const { stdout } = await execAsync(`du -sm ${rootPath} | cut -f1`)
+              diskMB = parseInt(stdout.trim(), 10) || 0
+            } catch {}
+            res.end(JSON.stringify({
+              ok: true,
+              version: ver.stdout,
+              pluginsCount: parseInt(plugins.stdout, 10) || 0,
+              themesCount: parseInt(themes.stdout, 10) || 0,
+              diskUsageMB: diskMB,
+            }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
+          }
+          break
+        }
+
+        case "update-core": {
+          const { rootPath } = data
+          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          try {
+            await ensureWpCli()
+            await wpRun(rootPath, "core update", 180000)
+            await wpRun(rootPath, "core update-db", 60000).catch(() => {})
+            const ver = await wpRun(rootPath, "core version").catch(() => ({ stdout: "" }))
+            res.end(JSON.stringify({ ok: true, version: ver.stdout }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
+        case "change-password": {
+          const { rootPath, user, password } = data
+          if (!rootPath || !user || !password) { res.writeHead(400); res.end(JSON.stringify({ error: "campos requeridos" })); return }
+          try {
+            await ensureWpCli()
+            const pwEsc = shellEscape(password)
+            await wpRun(rootPath, `user update '${user}' --user_pass='${pwEsc}'`)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
+        case "auto-login": {
+          const { rootPath, user } = data
+          if (!rootPath || !user) { res.writeHead(400); res.end(JSON.stringify({ error: "campos requeridos" })); return }
+          try {
+            await ensureWpCli()
+            // genera URL temporal de auto-login válida 5 min usando wp eval
+            const phpEval = `
+              $u = get_user_by('login', '${shellEscape(user)}');
+              if (!$u) { echo 'ERR_NO_USER'; return; }
+              $key = wp_generate_password(20, false);
+              update_user_meta($u->ID, '_tezca_login_key', $key);
+              update_user_meta($u->ID, '_tezca_login_exp', time() + 300);
+              echo $key;
+            `.replace(/\n/g, " ")
+            const { stdout } = await wpRun(rootPath, `eval "${phpEval}"`)
+            if (stdout === "ERR_NO_USER") { res.writeHead(404); res.end(JSON.stringify({ ok: false, error: "Usuario no existe" })); return }
+            res.end(JSON.stringify({ ok: true, key: stdout, user }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
+        case "uninstall": {
+          const { rootPath, dbName, dbUser } = data
+          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          try {
+            // borrar DB y usuario si se pasan
+            if (dbName) {
+              try { await execAsync(`mysql -e "DROP DATABASE IF EXISTS \\\`${dbName}\\\`"`) } catch {}
+            }
+            if (dbUser) {
+              try { await execAsync(`mysql -e "DROP USER IF EXISTS '${dbUser}'@'localhost'"`) } catch {}
+            }
+            // borrar archivos
+            if (rootPath.startsWith("/var/www/") || rootPath.startsWith("/www/")) {
+              await execAsync(`rm -rf ${rootPath}`)
+            }
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
+          }
+          break
+        }
+
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[wp]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
 // --- System Hardening ---
 const HARDENING_SYSCTL_FILE = "/etc/sysctl.d/99-tezcapanel-hardening.conf"
 
@@ -1877,6 +2108,8 @@ const server = http.createServer(async (req, res) => {
       handleIntrusion(req, res)
     } else if (method === "POST" && url === "/hardening/action") {
       handleHardening(req, res)
+    } else if (method === "POST" && url === "/wp/action") {
+      handleWp(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))

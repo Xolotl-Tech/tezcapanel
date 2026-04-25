@@ -2,6 +2,7 @@ import type { NavItem } from "@/types"
 
 export const navItems: NavItem[] = [
   { label: "Dashboard",      href: "/",          icon: "LayoutDashboard" },  { label: "Byte AI",       href: "/ai",        icon: "Bot",     proOnly: true },  { label: "Web",            href: "/web",        icon: "Globe" },
+  { label: "WP Toolkit",     href: "/wp-toolkit", icon: "Briefcase" },
   { label: "Bases de datos", href: "/databases",  icon: "Database" },
   { label: "Correo",         href: "/mail",       icon: "Mail" },
   { label: "DNS",            href: "/dns",        icon: "Server" },

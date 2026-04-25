@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import {
   LayoutDashboard, Globe, Database, Mail, Server,
-  Shield, Archive, Terminal, Users, Settings, ChevronRight, Bot,
+  Shield, Archive, Terminal, Users, Settings, ChevronRight, Bot, Briefcase,
 } from "lucide-react"
 
 const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard, Globe, Database, Mail, Server,
-  Shield, Archive, Terminal, Users, Settings, Bot,
+  Shield, Archive, Terminal, Users, Settings, Bot, Briefcase,
 }
 
 export function Sidebar() {

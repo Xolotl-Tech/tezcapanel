@@ -36,6 +36,39 @@ model Website {
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  wpSite     WpSite?
+}
+
+model WpCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  color     String   @default("#10b981")
+  builtIn   Boolean  @default(false)
+  sites     WpSite[]
+  createdAt DateTime @default(now())
+}
+
+model WpSite {
+  id           String      @id @default(cuid())
+  websiteId    String      @unique
+  website      Website     @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  categoryId   String?
+  category     WpCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  template     String      @default("blog") // blog | ecommerce | landing
+  version      String?
+  adminUser    String
+  adminEmail   String
+  dbName       String
+  dbUser       String
+  language     String      @default("es_MX")
+  pluginsCount Int         @default(0)
+  themesCount  Int         @default(0)
+  diskUsageMB  Int         @default(0)
+  lastSyncAt   DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([categoryId])
 }
 
 model Database {
