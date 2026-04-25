@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { useToast } from "@/hooks/use-toast"
 import { X } from "lucide-react"
 
 async function safeJson(res: Response) {
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function AddRuleDialog({ open, onClose, onCreated, kind }: Props) {
+  const { toast } = useToast()
   const [protocol, setProtocol] = useState<"tcp" | "udp" | "both">("tcp")
   const [port, setPort] = useState("")
   const [sourceIp, setSourceIp] = useState("")
@@ -54,7 +56,7 @@ export function AddRuleDialog({ open, onClose, onCreated, kind }: Props) {
       })
       const data = await safeJson(res)
       if (!res.ok) { setError(data.error || "Error al crear"); return }
-      if (data.warning) alert(`Creada pero: ${data.warning}`)
+      if (data.warning) toast({ title: "Regla creada con advertencia", description: data.warning })
       onCreated()
       setPort(""); setSourceIp(""); setDestPort(""); setCountry(""); setRemark("")
     } finally {

@@ -165,6 +165,70 @@ model FirewallRule {
   @@index([kind])
 }
 
+model IntrusionScan {
+  id             String    @id @default("singleton")
+  lastScanAt     DateTime?
+  durationMs     Int       @default(0)
+  status         String    @default("idle") // idle | running | done | error
+  error          String?
+  totalFindings  Int       @default(0)
+  updatedAt      DateTime  @updatedAt
+}
+
+model IntrusionBaseline {
+  id        String   @id @default(cuid())
+  path      String   @unique
+  sha256    String
+  size      Int      @default(0)
+  mtime     DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model IntrusionFinding {
+  id          String   @id @default(cuid())
+  type        String   // file-change | suspicious-process | unusual-port | rootkit | recent-change
+  severity    String   @default("medium")
+  title       String
+  description String?
+  path        String?
+  extra       String?  // JSON
+  resolved    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([type])
+  @@index([resolved])
+}
+
+model WebsiteSecurityScan {
+  id              String    @id @default("singleton")
+  score           Int       @default(0)
+  durationMs      Int       @default(0)
+  xssCount        Int       @default(0)
+  sqlCount        Int       @default(0)
+  maliciousCount  Int       @default(0)
+  phpAttackCount  Int       @default(0)
+  topIps          String    @default("[]") // JSON: [{ip, visits}]
+  lastScanAt      DateTime?
+  status          String    @default("idle") // idle | running | done | error
+  error           String?
+  updatedAt       DateTime  @updatedAt
+}
+
+model WebsiteSecurityRisk {
+  id           String   @id @default(cuid())
+  category     String   // config | file-leak | webshell | backup | weak-password | logs
+  severity     String   @default("medium") // low | medium | high
+  title        String
+  description  String?
+  affectedPath String?
+  domain       String?
+  resolved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([category])
+}
+
 model PanelSecuritySettings {
   id                  String   @id @default("singleton")
   alertOnSshLogin     Boolean  @default(false)

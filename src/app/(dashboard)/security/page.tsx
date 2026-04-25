@@ -4,6 +4,11 @@ import { useState } from "react"
 import { FirewallTab } from "@/components/security/firewall-tab"
 import { SshTab } from "@/components/security/ssh-tab"
 import { ServerSecurityTab } from "@/components/security/server-security-tab"
+import { WebsiteSecurityTab } from "@/components/security/website-security-tab"
+import { BruteForceTab } from "@/components/security/brute-force-tab"
+import { CompilerAccessTab } from "@/components/security/compiler-access-tab"
+import { AntiIntrusionTab } from "@/components/security/anti-intrusion-tab"
+import { SystemHardeningTab } from "@/components/security/system-hardening-tab"
 import { ComingSoonTab } from "@/components/security/coming-soon-tab"
 
 const TABS = [
@@ -43,11 +48,11 @@ export default function SecurityPage() {
       {tab === "firewall" && <FirewallTab />}
       {tab === "ssh" && <SshTab />}
       {tab === "server" && <ServerSecurityTab />}
-      {tab === "website" && <ComingSoonTab title="Website Security" description="Protección a nivel de sitio (WAF, ModSecurity, headers)." />}
-      {tab === "brute" && <ComingSoonTab title="Brute force protection" description="Fail2ban y protección contra ataques de fuerza bruta." />}
-      {tab === "compiler" && <ComingSoonTab title="Compiler Access" description="Control de acceso a compiladores y herramientas de desarrollo." />}
-      {tab === "intrusion" && <ComingSoonTab title="Anti Intrusion" description="Detección de intrusión (IDS/IPS)." />}
-      {tab === "hardening" && <ComingSoonTab title="System Hardening" description="Auditoría y endurecimiento automatizado del sistema." />}
+      {tab === "website" && <WebsiteSecurityTab />}
+      {tab === "brute" && <BruteForceTab />}
+      {tab === "compiler" && <CompilerAccessTab />}
+      {tab === "intrusion" && <AntiIntrusionTab />}
+      {tab === "hardening" && <SystemHardeningTab />}
     </div>
   )
 }

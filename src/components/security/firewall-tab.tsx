@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AddRuleDialog } from "@/components/security/add-rule-dialog"
 import { Toggle } from "@/components/security/toggle"
+import { useToast } from "@/hooks/use-toast"
 import { Search, Plus, Upload, Download, Trash2 } from "lucide-react"
 
 async function safeJson(res: Response) {
@@ -30,6 +31,7 @@ type SubTab = "port" | "ip" | "forward" | "area"
 type DirFilter = "all" | "inbound" | "outbound"
 
 export function FirewallTab() {
+  const { toast } = useToast()
   const [enabled, setEnabled] = useState(false)
   const [blockIcmp, setBlockIcmp] = useState(false)
   const [listening, setListening] = useState<number[]>([])
@@ -86,7 +88,7 @@ export function FirewallTab() {
     })
     if (!res.ok) {
       const data = await safeJson(res)
-      alert(data.error || "Error al actualizar")
+      toast({ variant: "destructive", title: "No se pudo aplicar", description: data.error || "Error al actualizar" })
       await loadStatus()
       return
     }
@@ -95,7 +97,11 @@ export function FirewallTab() {
 
   const deleteRule = async (id: string) => {
     if (!confirm("¿Eliminar esta regla?")) return
-    await fetch(`/api/security/firewall/rules/${id}`, { method: "DELETE" })
+    const res = await fetch(`/api/security/firewall/rules/${id}`, { method: "DELETE" })
+    if (!res.ok) {
+      const d = await safeJson(res)
+      toast({ variant: "destructive", title: "No se pudo eliminar", description: d.error || "Error" })
+    }
     await loadRules()
   }
 
@@ -106,6 +112,15 @@ export function FirewallTab() {
 
   return (
     <div className="space-y-4">
+      {!agentUp && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+          <strong className="text-amber-500">Entorno de desarrollo:</strong>{" "}
+          <span className="text-muted-foreground">
+            el agente no puede acceder a UFW/iptables. En producción (Linux con el agente como root) este módulo funcionará sin cambios.
+          </span>
+        </div>
+      )}
+
       {/* Header controls */}
       <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card/40 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -124,9 +139,6 @@ export function FirewallTab() {
             disabled={!agentUp || !enabled}
           />
         </div>
-        {!agentUp && (
-          <span className="text-xs text-destructive">Agente no disponible — controles deshabilitados</span>
-        )}
       </div>
 
       {/* Sub-tabs for rule types */}

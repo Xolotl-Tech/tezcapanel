@@ -673,6 +673,789 @@ function handleSshProvision(req, res) {
   })
 }
 
+// --- System Hardening ---
+const HARDENING_SYSCTL_FILE = "/etc/sysctl.d/99-tezcapanel-hardening.conf"
+
+const HARDENING_ITEMS = [
+  // category, id, label, description, type, sysctl key, expected, severity
+  { category: "network", id: "tcp-syncookies", label: "TCP SYN Cookies", description: "Protege contra ataques SYN flood", type: "sysctl", key: "net.ipv4.tcp_syncookies", expected: "1", severity: "medium" },
+  { category: "network", id: "icmp-redirects-accept", label: "Rechazar ICMP redirects", description: "Evita rutas de red maliciosas", type: "sysctl", key: "net.ipv4.conf.all.accept_redirects", expected: "0", severity: "medium" },
+  { category: "network", id: "icmp-redirects-send", label: "No enviar ICMP redirects", description: "El host no debería enviar redirects", type: "sysctl", key: "net.ipv4.conf.all.send_redirects", expected: "0", severity: "low" },
+  { category: "network", id: "source-routing", label: "Rechazar source routing", description: "Bloquea paquetes con rutas explícitas", type: "sysctl", key: "net.ipv4.conf.all.accept_source_route", expected: "0", severity: "medium" },
+  { category: "network", id: "rpfilter", label: "Reverse Path Filtering", description: "Bloquea paquetes con dirección de origen falsa", type: "sysctl", key: "net.ipv4.conf.all.rp_filter", expected: "1", severity: "medium" },
+  { category: "network", id: "log-martians", label: "Loguear paquetes marcianos", description: "Registra paquetes con dir. inválidas", type: "sysctl", key: "net.ipv4.conf.all.log_martians", expected: "1", severity: "low" },
+  { category: "network", id: "icmp-broadcast", label: "Ignorar broadcasts ICMP", description: "Previene ataques smurf", type: "sysctl", key: "net.ipv4.icmp_echo_ignore_broadcasts", expected: "1", severity: "low" },
+  { category: "network", id: "ip-forward", label: "Deshabilitar IP forwarding", description: "El host no es router", type: "sysctl", key: "net.ipv4.ip_forward", expected: "0", severity: "low" },
+  { category: "kernel", id: "aslr", label: "ASLR (Address Space Layout Randomization)", description: "Aleatoriza direcciones de memoria", type: "sysctl", key: "kernel.randomize_va_space", expected: "2", severity: "high" },
+  { category: "kernel", id: "ptrace", label: "Restringir ptrace", description: "Solo procesos propios pueden ser depurados", type: "sysctl", key: "kernel.yama.ptrace_scope", expected: "1", severity: "medium" },
+  { category: "kernel", id: "dmesg", label: "Restringir dmesg", description: "Solo root lee el log del kernel", type: "sysctl", key: "kernel.dmesg_restrict", expected: "1", severity: "low" },
+  { category: "kernel", id: "kptr", label: "Ocultar punteros del kernel", description: "Mitiga information disclosure", type: "sysctl", key: "kernel.kptr_restrict", expected: "2", severity: "medium" },
+  { category: "kernel", id: "core-dump", label: "Deshabilitar core dumps SUID", description: "Evita dumps con info sensible", type: "sysctl", key: "fs.suid_dumpable", expected: "0", severity: "medium" },
+  { category: "filesystem", id: "tmp-tmpfs", label: "/tmp como tmpfs", description: "Aísla /tmp en memoria volátil", type: "mount-check", path: "/tmp", expected: "tmpfs", severity: "low" },
+  { category: "filesystem", id: "cron-allow", label: "Restringir cron a usuarios autorizados", description: "Existe /etc/cron.allow", type: "file-exists", path: "/etc/cron.allow", expected: "true", severity: "low" },
+  { category: "filesystem", id: "at-allow", label: "Restringir at a usuarios autorizados", description: "Existe /etc/at.allow", type: "file-exists", path: "/etc/at.allow", expected: "true", severity: "low" },
+]
+
+async function readSysctl(key) {
+  try {
+    const { stdout } = await execAsync(`sysctl -n ${key}`)
+    return stdout.trim()
+  } catch { return null }
+}
+
+async function writeSysctlFile(items) {
+  const lines = ["# Generado por tezcapanel - System Hardening"]
+  for (const it of items) lines.push(`${it.key} = ${it.expected}`)
+  fs.writeFileSync(HARDENING_SYSCTL_FILE, lines.join("\n") + "\n")
+  await execAsync(`sysctl -p ${HARDENING_SYSCTL_FILE}`)
+}
+
+async function isMountedAs(mountpoint, fstype) {
+  try {
+    const { stdout } = await execAsync(`findmnt -n -o FSTYPE ${mountpoint}`)
+    return stdout.trim() === fstype
+  } catch { return false }
+}
+
+async function checkHardeningItem(it) {
+  let current = null, ok = false
+  if (it.type === "sysctl") {
+    current = await readSysctl(it.key)
+    ok = current !== null && current === it.expected
+  } else if (it.type === "mount-check") {
+    ok = await isMountedAs(it.path, it.expected)
+    current = ok ? it.expected : "no"
+  } else if (it.type === "file-exists") {
+    ok = fs.existsSync(it.path)
+    current = ok ? "presente" : "ausente"
+  }
+  return { ...it, current, ok }
+}
+
+function handleHardening(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+
+      switch (action) {
+        case "check": {
+          const items = await Promise.all(HARDENING_ITEMS.map(checkHardeningItem))
+          res.end(JSON.stringify({ ok: true, items }))
+          break
+        }
+        case "apply-all": {
+          const sysctlItems = HARDENING_ITEMS.filter((i) => i.type === "sysctl")
+          try {
+            await writeSysctlFile(sysctlItems)
+            const fixed = []
+            for (const it of HARDENING_ITEMS) {
+              if (it.type === "file-exists" && it.expected === "true" && !fs.existsSync(it.path)) {
+                try { fs.writeFileSync(it.path, "root\n", { mode: 0o600 }); fixed.push(it.id) } catch {}
+              }
+            }
+            res.end(JSON.stringify({ ok: true, fixed }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
+          }
+          break
+        }
+        case "apply-item": {
+          const item = HARDENING_ITEMS.find((i) => i.id === data.id)
+          if (!item) { res.writeHead(400); res.end(JSON.stringify({ error: "id inválido" })); return }
+          try {
+            if (item.type === "sysctl") {
+              // append/update single line in our hardening conf
+              let content = ""
+              try { content = fs.readFileSync(HARDENING_SYSCTL_FILE, "utf8") } catch {}
+              const re = new RegExp(`^${item.key.replace(/\./g, "\\.")}\\s*=.*$`, "m")
+              const line = `${item.key} = ${item.expected}`
+              content = re.test(content) ? content.replace(re, line) : content.trimEnd() + "\n" + line + "\n"
+              if (!content.startsWith("#")) content = "# Generado por tezcapanel\n" + content
+              fs.writeFileSync(HARDENING_SYSCTL_FILE, content)
+              await execAsync(`sysctl -w ${item.key}=${item.expected}`)
+            } else if (item.type === "file-exists" && item.expected === "true") {
+              if (!fs.existsSync(item.path)) fs.writeFileSync(item.path, "root\n", { mode: 0o600 })
+            } else if (item.type === "mount-check") {
+              res.writeHead(400)
+              res.end(JSON.stringify({ ok: false, error: "Cambios de montaje requieren intervención manual (editar /etc/fstab)" }))
+              return
+            }
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
+          }
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[hardening]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Anti Intrusion ---
+const crypto = require("crypto")
+const CRITICAL_FILES = [
+  "/etc/passwd", "/etc/shadow", "/etc/group", "/etc/sudoers",
+  "/etc/ssh/sshd_config", "/etc/hosts", "/etc/crontab",
+  "/etc/pam.d/common-password", "/etc/pam.d/sshd",
+  "/etc/nginx/nginx.conf", "/etc/apache2/apache2.conf",
+  "/root/.bashrc", "/root/.profile", "/root/.ssh/authorized_keys",
+]
+const SUSPICIOUS_DIRS = ["/tmp", "/var/tmp", "/dev/shm"]
+const EXPECTED_PORTS = [22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3000, 3306, 7070, 7071]
+
+function sha256File(p) {
+  try {
+    const buf = fs.readFileSync(p)
+    return crypto.createHash("sha256").update(buf).digest("hex")
+  } catch { return null }
+}
+
+async function listSuspiciousProcesses() {
+  const out = []
+  try {
+    const { stdout } = await execAsync("ps -eo pid,user,comm,args --no-headers")
+    for (const line of stdout.split("\n")) {
+      const parts = line.trim().split(/\s+/)
+      if (parts.length < 4) continue
+      const [pid, user, comm, ...rest] = parts
+      const argsStr = rest.join(" ")
+      for (const d of SUSPICIOUS_DIRS) {
+        if (argsStr.includes(d + "/") || argsStr.startsWith(d)) {
+          out.push({ pid, user, comm, path: argsStr.slice(0, 200) })
+          break
+        }
+      }
+    }
+  } catch {}
+  return out
+}
+
+async function listListeningPorts() {
+  const out = []
+  try {
+    const { stdout } = await execAsync("ss -tulnH 2>/dev/null || ss -tuln")
+    for (const line of stdout.split("\n")) {
+      const m = line.match(/:(\d+)\s/)
+      if (m) {
+        const port = parseInt(m[1], 10)
+        if (!out.some((x) => x.port === port)) {
+          const procMatch = line.match(/users:\(\("([^"]+)"/)
+          out.push({ port, process: procMatch ? procMatch[1] : null })
+        }
+      }
+    }
+  } catch {}
+  return out
+}
+
+async function findRecentlyModified(dir, days = 1, limit = 20) {
+  const out = []
+  try {
+    const { stdout } = await execAsync(`find ${dir} -type f -mtime -${days} 2>/dev/null | head -${limit}`)
+    for (const line of stdout.split("\n")) {
+      if (line.trim()) out.push(line.trim())
+    }
+  } catch {}
+  return out
+}
+
+async function runChkrootkit() {
+  try {
+    await execAsync("which chkrootkit")
+  } catch { return { installed: false, findings: [] } }
+  try {
+    const { stdout } = await execAsync("chkrootkit -q", { timeout: 120000 })
+    const findings = stdout.split("\n").map((l) => l.trim()).filter((l) => l && !/not found|nothing found|not infected/i.test(l))
+    return { installed: true, findings }
+  } catch (e) {
+    return { installed: true, findings: [], error: e.message }
+  }
+}
+
+function handleIntrusion(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+
+      switch (action) {
+        case "create-baseline": {
+          const baseline = []
+          for (const p of CRITICAL_FILES) {
+            const hash = sha256File(p)
+            if (!hash) continue
+            let size = 0, mtime = null
+            try { const st = fs.statSync(p); size = st.size; mtime = st.mtime.toISOString() } catch {}
+            baseline.push({ path: p, sha256: hash, size, mtime })
+          }
+          res.end(JSON.stringify({ ok: true, baseline }))
+          break
+        }
+        case "scan": {
+          const start = Date.now()
+          const findings = []
+          const baseline = Array.isArray(data.baseline) ? data.baseline : []
+          const baselineMap = new Map(baseline.map((b) => [b.path, b]))
+
+          // File integrity
+          for (const p of CRITICAL_FILES) {
+            const hash = sha256File(p)
+            if (!hash) continue
+            const prev = baselineMap.get(p)
+            if (prev && prev.sha256 !== hash) {
+              findings.push({
+                type: "file-change",
+                severity: "high",
+                title: "Archivo crítico modificado",
+                description: `El archivo ${p} cambió desde el baseline`,
+                path: p,
+                extra: JSON.stringify({ oldHash: prev.sha256, newHash: hash }),
+              })
+            }
+          }
+
+          // Suspicious processes
+          const procs = await listSuspiciousProcesses()
+          for (const p of procs) {
+            findings.push({
+              type: "suspicious-process",
+              severity: "high",
+              title: "Proceso ejecutándose desde directorio temporal",
+              description: `PID ${p.pid} (${p.user}) ${p.comm}: ${p.path}`,
+              path: p.path,
+              extra: JSON.stringify(p),
+            })
+          }
+
+          // Unusual listening ports
+          const ports = await listListeningPorts()
+          for (const p of ports) {
+            if (!EXPECTED_PORTS.includes(p.port) && p.port < 10000) {
+              findings.push({
+                type: "unusual-port",
+                severity: "medium",
+                title: `Puerto no esperado escuchando: ${p.port}`,
+                description: `Proceso: ${p.process ?? "desconocido"}`,
+                extra: JSON.stringify(p),
+              })
+            }
+          }
+
+          // Recent changes in /etc
+          const recent = await findRecentlyModified("/etc", 1, 15)
+          if (recent.length > 5) {
+            findings.push({
+              type: "recent-change",
+              severity: "low",
+              title: `${recent.length} archivos modificados en /etc (últimas 24h)`,
+              description: recent.slice(0, 5).join(", ") + (recent.length > 5 ? "..." : ""),
+              extra: JSON.stringify(recent),
+            })
+          }
+
+          // chkrootkit
+          const chk = await runChkrootkit()
+          for (const f of chk.findings) {
+            findings.push({
+              type: "rootkit",
+              severity: "high",
+              title: "Posible rootkit detectado",
+              description: f,
+            })
+          }
+
+          res.end(JSON.stringify({
+            ok: true,
+            durationMs: Date.now() - start,
+            findings,
+            chkrootkitInstalled: chk.installed,
+          }))
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[intrusion]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Compiler access ---
+const COMPILERS = [
+  { key: "gcc", label: "GCC (C)", paths: ["/usr/bin/gcc"] },
+  { key: "g++", label: "G++ (C++)", paths: ["/usr/bin/g++"] },
+  { key: "cc", label: "CC", paths: ["/usr/bin/cc"] },
+  { key: "make", label: "Make", paths: ["/usr/bin/make"] },
+  { key: "as", label: "Assembler (as)", paths: ["/usr/bin/as"] },
+  { key: "ld", label: "Linker (ld)", paths: ["/usr/bin/ld"] },
+  { key: "python2", label: "Python 2", paths: ["/usr/bin/python2", "/usr/bin/python2.7"] },
+  { key: "python3", label: "Python 3", paths: ["/usr/bin/python3"] },
+  { key: "perl", label: "Perl", paths: ["/usr/bin/perl"] },
+  { key: "ruby", label: "Ruby", paths: ["/usr/bin/ruby"] },
+  { key: "nasm", label: "NASM", paths: ["/usr/bin/nasm"] },
+  { key: "wget", label: "wget", paths: ["/usr/bin/wget"] },
+  { key: "curl", label: "curl", paths: ["/usr/bin/curl"] },
+]
+
+function resolveCompilerPath(paths) {
+  for (const p of paths) { try { fs.accessSync(p, fs.constants.F_OK); return p } catch {} }
+  return null
+}
+
+function compilerAccessible(filePath) {
+  try {
+    const st = fs.statSync(filePath)
+    // accessible by "others" if mode & 0o005 (read or exec for others)
+    return (st.mode & 0o005) !== 0
+  } catch { return false }
+}
+
+function handleCompilerAccess(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+      switch (action) {
+        case "status": {
+          const list = COMPILERS.map((c) => {
+            const p = resolveCompilerPath(c.paths)
+            return {
+              key: c.key,
+              label: c.label,
+              installed: !!p,
+              path: p,
+              accessible: p ? compilerAccessible(p) : false,
+            }
+          })
+          res.end(JSON.stringify({ ok: true, compilers: list }))
+          break
+        }
+        case "toggle": {
+          const { key, enabled } = data
+          const compiler = COMPILERS.find((c) => c.key === key)
+          if (!compiler) { res.writeHead(400); res.end(JSON.stringify({ error: "compilador desconocido" })); return }
+          const p = resolveCompilerPath(compiler.paths)
+          if (!p) { res.writeHead(404); res.end(JSON.stringify({ ok: false, error: "no instalado" })); return }
+          try {
+            // enabled: rwxr-xr-x (0755), disabled: rwx------ (0700) — root-only
+            const mode = enabled ? 0o755 : 0o700
+            fs.chmodSync(p, mode)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
+          }
+          break
+        }
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[compiler-access]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Brute force (fail2ban) ---
+const JAIL_LOCAL = "/etc/fail2ban/jail.local"
+const KNOWN_JAILS = ["sshd", "apache-auth", "nginx-http-auth", "postfix", "dovecot", "vsftpd", "mysqld-auth"]
+
+async function fail2banStatus() {
+  let installed = false, running = false, jails = []
+  try { await execAsync("which fail2ban-client"); installed = true } catch {}
+  if (!installed) return { installed, running, jails }
+  try { await execAsync("systemctl is-active --quiet fail2ban"); running = true } catch {}
+  if (running) {
+    try {
+      const { stdout } = await execAsync("fail2ban-client status")
+      const m = stdout.match(/Jail list:\s*(.+)/)
+      if (m) jails = m[1].split(",").map((s) => s.trim()).filter(Boolean)
+    } catch {}
+  }
+  return { installed, running, jails }
+}
+
+async function jailInfo(name) {
+  try {
+    const { stdout } = await execAsync(`fail2ban-client status ${name}`)
+    const failed = parseInt((stdout.match(/Currently failed:\s*(\d+)/) || [])[1] || "0", 10)
+    const totalFailed = parseInt((stdout.match(/Total failed:\s*(\d+)/) || [])[1] || "0", 10)
+    const banned = parseInt((stdout.match(/Currently banned:\s*(\d+)/) || [])[1] || "0", 10)
+    const totalBanned = parseInt((stdout.match(/Total banned:\s*(\d+)/) || [])[1] || "0", 10)
+    const ipsMatch = stdout.match(/Banned IP list:\s*(.*)/)
+    const bannedIps = ipsMatch ? ipsMatch[1].trim().split(/\s+/).filter(Boolean) : []
+    return { name, failed, totalFailed, banned, totalBanned, bannedIps }
+  } catch (e) {
+    return { name, error: e.message }
+  }
+}
+
+function readJailLocal() {
+  try { return fs.readFileSync(JAIL_LOCAL, "utf8") } catch { return "" }
+}
+
+function writeJailLocal(content) {
+  fs.writeFileSync(JAIL_LOCAL, content)
+}
+
+function getIniSection(content, section) {
+  const re = new RegExp(`\\[${section}\\]([\\s\\S]*?)(?=\\n\\[|$)`, "i")
+  return (content.match(re) || [null, ""])[1] || ""
+}
+
+function setIniKey(content, section, key, value) {
+  const re = new RegExp(`\\[${section}\\]([\\s\\S]*?)(?=\\n\\[|$)`, "i")
+  const sectionMatch = content.match(re)
+  const line = `${key} = ${value}`
+  if (!sectionMatch) {
+    return content.trimEnd() + `\n\n[${section}]\n${line}\n`
+  }
+  const body = sectionMatch[1]
+  const keyRe = new RegExp(`^\\s*${key}\\s*=.*$`, "m")
+  const newBody = keyRe.test(body) ? body.replace(keyRe, line) : body.trimEnd() + "\n" + line + "\n"
+  return content.replace(re, `[${section}]${newBody}`)
+}
+
+function handleBruteForce(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+
+      switch (action) {
+        case "status": {
+          const st = await fail2banStatus()
+          const jails = await Promise.all(st.jails.map(jailInfo))
+          let global = {}
+          const content = readJailLocal()
+          if (content) {
+            const def = getIniSection(content, "DEFAULT")
+            global = {
+              bantime: (def.match(/^\s*bantime\s*=\s*(\S+)/m) || [])[1] || "10m",
+              findtime: (def.match(/^\s*findtime\s*=\s*(\S+)/m) || [])[1] || "10m",
+              maxretry: (def.match(/^\s*maxretry\s*=\s*(\d+)/m) || [])[1] || "5",
+            }
+          }
+          res.end(JSON.stringify({ ok: true, ...st, jails, global }))
+          break
+        }
+        case "ban": {
+          const { jail, ip } = data
+          if (!jail || !ip) { res.writeHead(400); res.end(JSON.stringify({ error: "jail e ip requeridos" })); return }
+          try {
+            await execAsync(`fail2ban-client set ${jail} banip ${ip}`)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "unban": {
+          const { jail, ip } = data
+          if (!jail || !ip) { res.writeHead(400); res.end(JSON.stringify({ error: "jail e ip requeridos" })); return }
+          try {
+            await execAsync(`fail2ban-client set ${jail} unbanip ${ip}`)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "update-jail": {
+          const { jail, enabled, maxretry, bantime, findtime } = data
+          if (!jail) { res.writeHead(400); res.end(JSON.stringify({ error: "jail requerido" })); return }
+          try {
+            let content = readJailLocal() || "[DEFAULT]\nignoreip = 127.0.0.1/8 ::1\n\n"
+            if (typeof enabled === "boolean") content = setIniKey(content, jail, "enabled", enabled ? "true" : "false")
+            if (maxretry !== undefined) content = setIniKey(content, jail, "maxretry", String(parseInt(maxretry, 10) || 5))
+            if (bantime !== undefined) content = setIniKey(content, jail, "bantime", String(bantime))
+            if (findtime !== undefined) content = setIniKey(content, jail, "findtime", String(findtime))
+            writeJailLocal(content)
+            await execAsync("fail2ban-client reload")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "update-global": {
+          const { maxretry, bantime, findtime } = data
+          try {
+            let content = readJailLocal() || "[DEFAULT]\nignoreip = 127.0.0.1/8 ::1\n\n"
+            if (maxretry !== undefined) content = setIniKey(content, "DEFAULT", "maxretry", String(parseInt(maxretry, 10) || 5))
+            if (bantime !== undefined) content = setIniKey(content, "DEFAULT", "bantime", String(bantime))
+            if (findtime !== undefined) content = setIniKey(content, "DEFAULT", "findtime", String(findtime))
+            writeJailLocal(content)
+            await execAsync("fail2ban-client reload")
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) { res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) })) }
+          break
+        }
+        case "known-jails":
+          res.end(JSON.stringify({ ok: true, jails: KNOWN_JAILS }))
+          break
+        default:
+          res.writeHead(400); res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[brute-force]", err)
+      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+    }
+  })
+}
+
+// --- Website security scanner ---
+const SENSITIVE_PROBES = [
+  ".env", ".env.local", ".env.production",
+  ".git/HEAD", ".git/config",
+  ".DS_Store",
+  "wp-config.php.bak", "wp-config.php.old", "wp-config.old",
+  "config.php.bak", "config.bak",
+  "backup.sql", "db.sql", "dump.sql",
+  "phpinfo.php", "info.php",
+  "composer.lock", "yarn.lock", "package-lock.json",
+  ".htaccess.bak",
+  "readme.html", "license.txt",
+]
+const WEBSHELL_PATTERNS = [
+  /eval\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)/,
+  /base64_decode\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)/,
+  /assert\s*\(\s*\$_(POST|GET|REQUEST)/,
+  /(system|shell_exec|passthru|popen)\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)/,
+  /preg_replace\s*\(\s*["'][^"']*\/e["']/,
+  /create_function\s*\(/,
+]
+const BACKUP_EXTS = [".bak", ".old", ".swp", ".tmp", ".orig", "~"]
+
+const ATTACK_PATTERNS = {
+  xss: /(<script|javascript:|onerror=|onload=|%3Cscript)/i,
+  sql: /(union\s+select|'\s*or\s+1=1|information_schema|--|;drop\s+table|xp_cmdshell)/i,
+  php: /(\.php\?.*=(http|ftp):\/\/|eval\(|base64_decode|allow_url_include)/i,
+  malicious: /(\.\.\/\.\.\/|etc\/passwd|\/proc\/self|boot\.ini|wp-login\.php)/i,
+}
+
+async function fetchHeaders(url, timeout = 5000) {
+  return new Promise((resolve) => {
+    try {
+      const lib = url.startsWith("https") ? require("https") : require("http")
+      const req = lib.request(url, { method: "HEAD", timeout }, (res) => {
+        resolve({ status: res.statusCode, headers: res.headers })
+      })
+      req.on("error", () => resolve({ status: 0, headers: {} }))
+      req.on("timeout", () => { req.destroy(); resolve({ status: 0, headers: {} }) })
+      req.end()
+    } catch { resolve({ status: 0, headers: {} }) }
+  })
+}
+
+async function probeUrl(url, timeout = 5000) {
+  return new Promise((resolve) => {
+    try {
+      const lib = url.startsWith("https") ? require("https") : require("http")
+      const req = lib.request(url, { method: "GET", timeout }, (res) => {
+        let body = ""
+        res.on("data", (c) => { if (body.length < 500) body += c.toString() })
+        res.on("end", () => resolve({ status: res.statusCode, body }))
+      })
+      req.on("error", () => resolve({ status: 0, body: "" }))
+      req.on("timeout", () => { req.destroy(); resolve({ status: 0, body: "" }) })
+      req.end()
+    } catch { resolve({ status: 0, body: "" }) }
+  })
+}
+
+function walkFiles(dir, maxDepth = 6, filter = () => true) {
+  const out = []
+  function walk(d, depth) {
+    if (depth > maxDepth) return
+    let entries
+    try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const ent of entries) {
+      if (ent.name.startsWith(".")) continue
+      const p = path.join(d, ent.name)
+      if (ent.isDirectory()) {
+        if (["node_modules", "vendor", "cache", "uploads"].includes(ent.name)) continue
+        walk(p, depth + 1)
+      } else if (ent.isFile() && filter(p)) {
+        out.push(p)
+        if (out.length > 5000) return
+      }
+    }
+  }
+  walk(dir, 0)
+  return out
+}
+
+async function scanWebsite(site) {
+  const risks = { config: [], "file-leak": [], webshell: [], backup: [], "weak-password": [], logs: [] }
+  const { domain, rootPath } = site
+
+  // --- Configuración: cabeceras de seguridad ---
+  if (domain) {
+    const url = `http://${domain}`
+    const { status, headers } = await fetchHeaders(url)
+    if (status > 0) {
+      const expected = {
+        "x-frame-options": "X-Frame-Options (clickjacking)",
+        "x-content-type-options": "X-Content-Type-Options (MIME sniffing)",
+        "strict-transport-security": "Strict-Transport-Security (HSTS)",
+        "content-security-policy": "Content-Security-Policy (XSS)",
+        "referrer-policy": "Referrer-Policy",
+      }
+      for (const [h, label] of Object.entries(expected)) {
+        if (!headers[h]) {
+          risks.config.push({
+            severity: "medium",
+            title: `Falta cabecera ${label}`,
+            description: `El sitio ${domain} no envía la cabecera ${h}`,
+            affectedPath: url,
+          })
+        }
+      }
+      if (headers.server) {
+        risks.config.push({
+          severity: "low",
+          title: "Cabecera Server expone tecnología",
+          description: `El sitio expone: ${headers.server}`,
+          affectedPath: url,
+        })
+      }
+    }
+  }
+
+  // --- File leak: probar paths sensibles ---
+  if (domain) {
+    for (const probe of SENSITIVE_PROBES) {
+      const url = `http://${domain}/${probe}`
+      const { status, body } = await probeUrl(url, 3000)
+      if (status === 200 && body.length > 0) {
+        risks["file-leak"].push({
+          severity: "high",
+          title: `Archivo sensible expuesto: ${probe}`,
+          description: `Accesible públicamente vía ${url}`,
+          affectedPath: url,
+        })
+      }
+    }
+  }
+
+  // --- Webshell scan y backup files ---
+  if (rootPath && fs.existsSync(rootPath)) {
+    const phpFiles = walkFiles(rootPath, 6, (p) => p.endsWith(".php"))
+    for (const f of phpFiles.slice(0, 500)) {
+      try {
+        const stat = fs.statSync(f)
+        if (stat.size > 1024 * 1024) continue
+        const content = fs.readFileSync(f, "utf8")
+        for (const pat of WEBSHELL_PATTERNS) {
+          if (pat.test(content)) {
+            risks.webshell.push({
+              severity: "high",
+              title: "Posible webshell detectada",
+              description: `Patrón sospechoso (${pat.source.slice(0, 40)}...)`,
+              affectedPath: f,
+            })
+            break
+          }
+        }
+      } catch {}
+    }
+
+    const backupFiles = walkFiles(rootPath, 6, (p) => BACKUP_EXTS.some((e) => p.endsWith(e)))
+    for (const f of backupFiles.slice(0, 50)) {
+      risks.backup.push({
+        severity: "medium",
+        title: "Archivo de backup expuesto",
+        description: `Archivo con extensión de respaldo en directorio web`,
+        affectedPath: f,
+      })
+    }
+  }
+
+  return { domain, risks }
+}
+
+async function analyzeLogs(logPaths) {
+  const counts = { xss: 0, sql: 0, php: 0, malicious: 0 }
+  const ipVisits = new Map()
+  const logRisks = []
+  for (const p of logPaths) {
+    if (!fs.existsSync(p)) continue
+    let content = ""
+    try { content = fs.readFileSync(p, "utf8").slice(-500000) } catch { continue }
+    const lines = content.split("\n").slice(-2000)
+    for (const line of lines) {
+      const ipMatch = line.match(/^(\d+\.\d+\.\d+\.\d+)/)
+      if (ipMatch) ipVisits.set(ipMatch[1], (ipVisits.get(ipMatch[1]) || 0) + 1)
+      const pathMatch = line.match(/"(GET|POST|PUT|DELETE|HEAD)\s+([^\s"]+)/)
+      if (!pathMatch) continue
+      const url = decodeURIComponent(pathMatch[2])
+      for (const [kind, re] of Object.entries(ATTACK_PATTERNS)) {
+        if (re.test(url)) { counts[kind]++; break }
+      }
+    }
+  }
+  const topIps = [...ipVisits.entries()]
+    .sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([ip, visits]) => ({ ip, visits }))
+  if (counts.xss + counts.sql + counts.php + counts.malicious > 0) {
+    logRisks.push({
+      severity: "high",
+      title: "Patrones de ataque detectados en logs",
+      description: `XSS:${counts.xss} SQLi:${counts.sql} PHP:${counts.php} Malicioso:${counts.malicious}`,
+    })
+  }
+  return { counts, topIps, logRisks }
+}
+
+function handleWebsiteScan(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    const start = Date.now()
+    try {
+      const data = JSON.parse(body || "{}")
+      const websites = Array.isArray(data.websites) ? data.websites : []
+      const logPaths = Array.isArray(data.logPaths) ? data.logPaths : []
+
+      const allRisks = { config: [], "file-leak": [], webshell: [], backup: [], "weak-password": [], logs: [] }
+      for (const site of websites) {
+        const { risks } = await scanWebsite(site)
+        for (const k of Object.keys(allRisks)) {
+          allRisks[k].push(...risks[k].map((r) => ({ ...r, domain: site.domain })))
+        }
+      }
+      const { counts, topIps, logRisks } = await analyzeLogs(logPaths)
+      allRisks.logs.push(...logRisks)
+
+      const total = Object.values(allRisks).reduce((s, arr) => s + arr.length, 0)
+      const score = Math.max(0, 100 - Math.min(100, total * 3 + counts.sql * 4 + counts.xss * 3 + counts.malicious * 2 + counts.php * 3))
+
+      res.end(JSON.stringify({
+        ok: true,
+        durationMs: Date.now() - start,
+        score,
+        risks: allRisks,
+        counts,
+        topIps,
+      }))
+    } catch (err) {
+      console.error("[website/scan]", err)
+      res.writeHead(500); res.end(JSON.stringify({ ok: false, error: err.message }))
+    }
+  })
+}
+
 // --- Server security actions ---
 function handleServerSecurityAction(req, res) {
   let body = ""
@@ -1084,6 +1867,16 @@ const server = http.createServer(async (req, res) => {
       handleServerSecurityCheck(req, res)
     } else if (method === "POST" && url === "/server-security/action") {
       handleServerSecurityAction(req, res)
+    } else if (method === "POST" && url === "/website-security/scan") {
+      handleWebsiteScan(req, res)
+    } else if (method === "POST" && url === "/brute-force/action") {
+      handleBruteForce(req, res)
+    } else if (method === "POST" && url === "/compiler-access/action") {
+      handleCompilerAccess(req, res)
+    } else if (method === "POST" && url === "/intrusion/action") {
+      handleIntrusion(req, res)
+    } else if (method === "POST" && url === "/hardening/action") {
+      handleHardening(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))
