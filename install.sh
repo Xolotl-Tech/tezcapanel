@@ -239,15 +239,17 @@ header "Configurando firewall"
 
 if command -v ufw &>/dev/null; then
   ufw allow $PANEL_PORT/tcp
+  ufw allow $AGENT_WS_PORT/tcp
   ufw allow 22/tcp
   ufw --force enable
   log "UFW configurado"
 elif command -v firewall-cmd &>/dev/null; then
   firewall-cmd --permanent --add-port=$PANEL_PORT/tcp
+  firewall-cmd --permanent --add-port=$AGENT_WS_PORT/tcp
   firewall-cmd --reload
   log "firewalld configurado"
 else
-  warn "No se detectó firewall — abre el puerto $PANEL_PORT manualmente"
+  warn "No se detectó firewall — abre los puertos $PANEL_PORT y $AGENT_WS_PORT manualmente"
 fi
 
 # =============================================================================
