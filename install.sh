@@ -118,6 +118,8 @@ npm rebuild node-pty
 log "Dependencias instaladas"
 
 header "Configurando entorno"
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+
 if [ ! -f "$APP_DIR/.env" ]; then
   AUTH_SECRET=$(openssl rand -base64 32)
   AGENT_TOKEN=$(openssl rand -hex 32)
@@ -125,6 +127,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
 DATABASE_URL="file:$APP_DIR/prisma/prod.db"
 AUTH_SECRET="$AUTH_SECRET"
 AUTH_TRUST_HOST=true
+NEXTAUTH_URL="http://$LOCAL_IP:$PANEL_PORT"
 AGENT_URL="http://127.0.0.1:$AGENT_PORT"
 AGENT_TOKEN="$AGENT_TOKEN"
 NODE_ENV="production"
@@ -132,10 +135,14 @@ PORT=$PANEL_PORT
 EOF
   log "Archivo .env generado"
 else
-  warn ".env ya existe — verificando AUTH_TRUST_HOST..."
+  warn ".env ya existe — verificando variables requeridas..."
   if ! grep -q "AUTH_TRUST_HOST" $APP_DIR/.env; then
     echo 'AUTH_TRUST_HOST=true' >> $APP_DIR/.env
     log "AUTH_TRUST_HOST agregado"
+  fi
+  if ! grep -q "NEXTAUTH_URL" $APP_DIR/.env; then
+    echo "NEXTAUTH_URL=\"http://$LOCAL_IP:$PANEL_PORT\"" >> $APP_DIR/.env
+    log "NEXTAUTH_URL agregado"
   fi
   AGENT_TOKEN=$(grep AGENT_TOKEN $APP_DIR/.env | cut -d'"' -f2)
 fi
@@ -278,7 +285,6 @@ else
 fi
 
 PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null)
-LOCAL_IP=$(hostname -I | awk '{print $1}')
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
