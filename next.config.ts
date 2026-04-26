@@ -1,7 +1,13 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  serverExternalPackages: ["ssh2", "node-pty"],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = [...(config.externals || []), "ssh2", "node-pty"]
+    }
+    return config
+  },
+}
 
-export default nextConfig;
+export default nextConfig
