@@ -362,7 +362,8 @@ fi
 # =============================================================================
 # 14. Resumen final
 # =============================================================================
-IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+PUBLIC_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null)
+LOCAL_IP=$(hostname -I | awk '{print $1}')
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -382,3 +383,5 @@ echo -e "  Al abrir el panel por primera vez se te pedirá"
 echo -e "  crear tu cuenta de administrador."
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "  Panel (local):   ${BLUE}http://$LOCAL_IP:$PANEL_PORT${NC}"
+echo -e "  Panel (público): ${BLUE}http://$PUBLIC_IP:$PANEL_PORT${NC}"
