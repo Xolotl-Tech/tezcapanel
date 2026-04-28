@@ -7,7 +7,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await context.params
   const data = await req.json()
@@ -24,7 +24,7 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await context.params
   const site = await prisma.website.findUnique({ where: { id } })

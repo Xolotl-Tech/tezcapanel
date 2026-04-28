@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { id } = await params
 
   const site = await prisma.wpSite.findUnique({ where: { id }, include: { website: true } })

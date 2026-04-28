@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const r = await sshAgent.status()
   return NextResponse.json({
     agentAvailable: r.ok,
@@ -17,7 +17,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
   const r = await sshAgent.updateConfig(body)

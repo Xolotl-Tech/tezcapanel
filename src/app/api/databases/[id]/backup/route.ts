@@ -10,7 +10,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await context.params
   const db = await prisma.database.findUnique({ where: { id } })

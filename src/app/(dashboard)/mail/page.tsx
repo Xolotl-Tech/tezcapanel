@@ -10,12 +10,7 @@ import {
   Mail, Plus, RefreshCw, Trash2, Globe, AtSign,
   KeyRound, CheckCircle2, XCircle, Key, AlertTriangle, Copy, X,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface MailDomain {
   id: string
@@ -71,21 +66,17 @@ export default function MailPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     setError("")
-    try {
-      const [dRes, aRes, alRes] = await Promise.all([
-        fetch("/api/mail/domains"),
-        fetch("/api/mail/accounts"),
-        fetch("/api/mail/aliases"),
-      ])
-      const [dData, aData, alData] = await Promise.all([dRes.json(), aRes.json(), alRes.json()])
-      setDomains(dData.domains ?? [])
-      setAccounts(aData.accounts ?? [])
-      setAliases(alData.aliases ?? [])
-    } catch {
-      setError("Error al cargar los datos de correo")
-    } finally {
-      setLoading(false)
-    }
+    const [dResult, aResult, alResult] = await Promise.allSettled([
+      fetch("/api/mail/domains").then((r) => r.json()),
+      fetch("/api/mail/accounts").then((r) => r.json()),
+      fetch("/api/mail/aliases").then((r) => r.json()),
+    ])
+    setDomains(dResult.status === "fulfilled" ? (dResult.value.domains ?? []) : [])
+    setAccounts(aResult.status === "fulfilled" ? (aResult.value.accounts ?? []) : [])
+    setAliases(alResult.status === "fulfilled" ? (alResult.value.aliases ?? []) : [])
+    const anyFailed = [dResult, aResult, alResult].some((r) => r.status === "rejected")
+    if (anyFailed) setError("Algunos datos no pudieron cargarse")
+    setLoading(false)
   }, [])
 
   useEffect(() => { fetchAll() }, [fetchAll])

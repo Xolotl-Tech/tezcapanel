@@ -17,7 +17,9 @@ function dbNameFromDomain(domain: string) {
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
   const sites = await prisma.wpSite.findMany({
     orderBy: { createdAt: "desc" },
     include: {
@@ -31,7 +33,9 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
 
   const body = await req.json()
   const {

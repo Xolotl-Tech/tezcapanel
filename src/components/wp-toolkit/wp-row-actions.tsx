@@ -8,12 +8,7 @@ import { useToast } from "@/hooks/use-toast"
 import {
   LogIn, RefreshCw, KeyRound, Trash2, MoreHorizontal, X, FolderTree,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Props {
   site: { id: string; adminUser: string; category: { id: string } | null; website: { domain: string } }

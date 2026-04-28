@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const servers = await prisma.sshServer.findMany({
     orderBy: { createdAt: "desc" },
@@ -18,7 +18,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
   const { host, port, username, authType, password, privateKey, remarks } = body

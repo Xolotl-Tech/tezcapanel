@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function POST(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { id, all } = await req.json()
   const r = all ? await hardeningAgent.applyAll() : await hardeningAgent.applyItem(id)
   if (!r.ok) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })

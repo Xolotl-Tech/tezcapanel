@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function POST() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const r = await intrusionAgent.createBaseline()
   if (!r.ok || !r.baseline) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })

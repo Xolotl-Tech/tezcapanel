@@ -7,12 +7,7 @@ import {
   RefreshCw, Camera, FileWarning, Terminal, Network,
   FileClock, Bug, X, Shield, CheckCircle2,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Finding {
   id: string

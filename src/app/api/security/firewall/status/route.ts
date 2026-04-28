@@ -4,7 +4,7 @@ import { firewallAgent } from "@/lib/firewall-agent"
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const [status, listening] = await Promise.all([
     firewallAgent.status(),

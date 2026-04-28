@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function POST() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   await prisma.intrusionScan.upsert({
     where: { id: "singleton" },

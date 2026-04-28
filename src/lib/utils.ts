@@ -22,3 +22,10 @@ export function formatUptime(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`
   return `${m}m`
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function safeJson<T = any>(res: Response): Promise<T> {
+  const text = await res.text()
+  if (!text) return {} as T
+  try { return JSON.parse(text) as T } catch { return {} as T }
+}

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 
 export async function POST(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { password } = await req.json()
   if (!password || typeof password !== "string" || password.length < 8) {
     return NextResponse.json({ error: "La contraseña debe tener al menos 8 caracteres" }, { status: 400 })

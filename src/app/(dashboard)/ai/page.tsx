@@ -51,6 +51,7 @@ export default function AIPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: history }),
+        signal: AbortSignal.timeout(30000),
       })
 
       const data = await res.json()
@@ -90,6 +91,7 @@ export default function AIPage() {
           commands: actions.map((a) => a.command),
           actionLabels: actions.map((a) => a.label),
         }),
+        signal: AbortSignal.timeout(90000),
       })
 
       const data = await res.json()

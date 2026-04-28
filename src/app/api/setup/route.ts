@@ -3,15 +3,6 @@ import { prisma } from "@/lib/prisma"
 import bcrypt from "bcryptjs"
 
 export async function POST(req: NextRequest) {
-  // Verificar que no haya usuarios — solo se puede usar una vez
-  const count = await prisma.user.count()
-  if (count > 0) {
-    return NextResponse.json(
-      { error: "El panel ya está configurado" },
-      { status: 403 }
-    )
-  }
-
   const { name, email, password } = await req.json()
 
   if (!name || !email || !password) {
@@ -30,9 +21,22 @@ export async function POST(req: NextRequest) {
 
   const hashed = await bcrypt.hash(password, 12)
 
-  const user = await prisma.user.create({
-    data: { name, email, password: hashed, role: "ADMIN" },
-  })
-
-  return NextResponse.json({ ok: true, userId: user.id })
+  try {
+    const user = await prisma.$transaction(async (tx) => {
+      const count = await tx.user.count()
+      if (count > 0) throw new Error("ALREADY_SETUP")
+      return tx.user.create({
+        data: { name, email, password: hashed, role: "ADMIN" },
+      })
+    })
+    return NextResponse.json({ ok: true, userId: user.id })
+  } catch (err) {
+    if (err instanceof Error && err.message === "ALREADY_SETUP") {
+      return NextResponse.json(
+        { error: "El panel ya está configurado" },
+        { status: 403 }
+      )
+    }
+    throw err
+  }
 }

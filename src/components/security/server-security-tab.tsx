@@ -4,12 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { SecurityConfigDialog } from "@/components/security/security-config-dialog"
 import { CheckCircle2, XCircle, Info, Settings } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Check {
   id: string

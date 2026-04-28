@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function PATCH(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const body = await req.json()
   const r = await bruteForceAgent.updateGlobal(body)
   if (!r.ok) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })

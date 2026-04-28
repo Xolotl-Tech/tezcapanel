@@ -29,10 +29,12 @@ export default function TerminalPage() {
   const apisRef = useRef<Map<string, TerminalApi>>(new Map())
 
   useEffect(() => {
-    fetch("/api/terminal/token")
+    const controller = new AbortController()
+    fetch("/api/terminal/token", { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => { setToken(data.token ?? ""); setLoading(false) })
-      .catch(() => setLoading(false))
+      .catch((err) => { if (err.name !== "AbortError") setLoading(false) })
+    return () => controller.abort()
   }, [])
 
   const loadServers = useCallback(async () => {

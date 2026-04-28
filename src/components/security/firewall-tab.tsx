@@ -7,12 +7,7 @@ import { AddRuleDialog } from "@/components/security/add-rule-dialog"
 import { Toggle } from "@/components/security/toggle"
 import { useToast } from "@/hooks/use-toast"
 import { Search, Plus, Upload, Download, Trash2 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Rule {
   id: string

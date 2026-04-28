@@ -20,7 +20,7 @@ async function ensureDefaults() {
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   await ensureDefaults()
   const categories = await prisma.wpCategory.findMany({
     orderBy: [{ builtIn: "desc" }, { name: "asc" }],
@@ -31,7 +31,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { name, color } = await req.json()
   if (!name) return NextResponse.json({ error: "name requerido" }, { status: 400 })
   const cat = await prisma.wpCategory.create({ data: { name, color: color ?? "#10b981" } })

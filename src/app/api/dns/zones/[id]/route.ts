@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
     const zone = await prisma.dnsZone.findUnique({
@@ -32,7 +32,7 @@ export async function PATCH(
 ) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
     const data = await req.json()
@@ -72,7 +72,7 @@ export async function DELETE(
 ) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
     const zone = await prisma.dnsZone.findUnique({ where: { id }, include: { provider: true } })

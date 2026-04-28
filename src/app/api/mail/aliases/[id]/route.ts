@@ -9,7 +9,7 @@ export async function PATCH(
 ) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
     const { destination, active } = await req.json()
@@ -42,7 +42,7 @@ export async function DELETE(
 ) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
     const record = await prisma.mailAlias.findUnique({ where: { id } })

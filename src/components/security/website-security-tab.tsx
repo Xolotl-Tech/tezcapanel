@@ -7,12 +7,7 @@ import {
   Timer, Globe, Database, AlertTriangle, Zap, RefreshCw, Code2, FileText,
   ShieldAlert, Archive, KeyRound, FileSearch, X, ChevronRight,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Scan {
   score: number

@@ -10,12 +10,7 @@ import {
   CheckCircle2, XCircle, AlertTriangle, X, ShieldCheck, Power,
   Cloud, Pencil, FileText,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Zone {
   id: string

@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
   await prisma.sshServer.delete({ where: { id } }).catch(() => null)
@@ -13,7 +13,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
   const server = await prisma.sshServer.findUnique({

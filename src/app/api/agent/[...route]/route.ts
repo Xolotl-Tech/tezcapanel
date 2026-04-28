@@ -7,7 +7,7 @@ const AGENT_TOKEN = process.env.AGENT_TOKEN ?? ""
 
 export async function POST(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { commands, actionLabels } = await req.json()
 

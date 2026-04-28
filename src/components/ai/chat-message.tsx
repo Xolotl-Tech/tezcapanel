@@ -17,6 +17,18 @@ const riskConfig = {
   high:   { label: "Alto riesgo",  className: "border-destructive/50 text-destructive" },
 }
 
+function renderMarkdown(raw: string): string {
+  const escaped = raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+  return escaped
+    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.*?)`/g, '<code class="bg-muted px-1 rounded text-xs">$1</code>')
+    .replace(/\n/g, "<br/>")
+}
+
 export function ChatMessageItem({ message, onConfirmActions }: ChatMessageProps) {
   const isUser = message.role === "user"
 
@@ -48,12 +60,7 @@ export function ChatMessageItem({ message, onConfirmActions }: ChatMessageProps)
             className="prose prose-invert prose-sm max-w-none
               prose-code:bg-muted prose-code:px-1 prose-code:rounded prose-code:text-xs
               prose-pre:bg-muted prose-pre:border prose-pre:border-border"
-            dangerouslySetInnerHTML={{
-              __html: message.content
-                .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                .replace(/`(.*?)`/g, '<code class="bg-muted px-1 rounded text-xs">$1</code>')
-                .replace(/\n/g, "<br/>"),
-            }}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
           />
         </div>
 

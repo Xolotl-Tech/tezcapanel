@@ -6,7 +6,7 @@ import { friendlyError } from "@/lib/agent-errors"
 
 export async function GET() {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const r = await compilerAgent.status()
   return NextResponse.json({
     agentAvailable: r.ok,
@@ -16,7 +16,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { key, enabled } = await req.json()
   if (!key || typeof enabled !== "boolean") {
     return NextResponse.json({ error: "key y enabled requeridos" }, { status: 400 })

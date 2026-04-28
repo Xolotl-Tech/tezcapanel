@@ -7,7 +7,9 @@ const AGENT_TOKEN = process.env.AGENT_TOKEN ?? ""
 
 export async function POST(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
 
   const { commands, actionLabels } = await req.json()
 
@@ -15,13 +17,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "commands requerido" }, { status: 400 })
   }
 
-  // Registrar en audit log antes de ejecutar
+  const safeCommands = commands.slice(0, 20)
+  const target = (actionLabels?.join(", ") ?? safeCommands.join(", ")).slice(0, 500)
+
   await prisma.auditLog.create({
     data: {
       userId: session.user.id,
       action: "execute_commands",
-      target: actionLabels?.join(", ") ?? commands.join(", "),
-      metadata: JSON.stringify({ commands }),
+      target,
+      metadata: JSON.stringify({ commands: safeCommands }),
     },
   })
 

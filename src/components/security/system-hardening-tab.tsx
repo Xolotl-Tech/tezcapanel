@@ -7,12 +7,7 @@ import {
   RefreshCw, ShieldCheck, Wrench, CheckCircle2, XCircle,
   Network, Cpu, HardDrive,
 } from "lucide-react"
-
-async function safeJson(res: Response) {
-  const text = await res.text()
-  if (!text) return {}
-  try { return JSON.parse(text) } catch { return {} }
-}
+import { safeJson } from "@/lib/utils"
 
 interface Item {
   category: string

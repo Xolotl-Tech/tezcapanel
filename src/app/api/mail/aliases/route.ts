@@ -6,7 +6,7 @@ import { mailAgent } from "@/lib/mail-agent"
 export async function GET() {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const aliases = await prisma.mailAlias.findMany({ orderBy: { createdAt: "desc" } })
     return NextResponse.json({ aliases })
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { source, destination } = await req.json()
 

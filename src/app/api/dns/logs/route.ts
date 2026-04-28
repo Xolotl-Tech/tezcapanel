@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 export async function GET() {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const logs = await prisma.auditLog.findMany({
       where: { action: { contains: "dns_" } },

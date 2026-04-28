@@ -29,7 +29,7 @@ async function getPanelSettings() {
 export async function GET() {
   try {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const [check, logs, panelLogins, panelSettings] = await Promise.all([
     serverCheck(),
@@ -183,7 +183,7 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
   const allowed = ["alertOnSshLogin", "alertOnPanelLogin", "totpEnabled", "unauthStatusCode", "sslEnabled"] as const

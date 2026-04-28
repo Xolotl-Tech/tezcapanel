@@ -4,7 +4,7 @@ import { sshAgent } from "@/lib/ssh-agent"
 
 export async function GET(req: NextRequest) {
   const session = await auth()
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const limit = parseInt(new URL(req.url).searchParams.get("limit") || "200", 10)
   const r = await sshAgent.logs(limit)
   return NextResponse.json({

@@ -6,7 +6,9 @@ import { mailAgent } from "@/lib/mail-agent"
 export async function GET() {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
 
     const domains = await prisma.mailDomain.findMany({ orderBy: { createdAt: "desc" } })
     return NextResponse.json({ domains })
@@ -19,13 +21,15 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const session = await auth()
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!session || session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
 
     const { domain } = await req.json()
 
     if (!domain) return NextResponse.json({ error: "El dominio es requerido" }, { status: 400 })
 
-    const domainRegex = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
+    const domainRegex = /^(?!.*\.\.)(?![-.])[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$/
     if (!domainRegex.test(domain)) {
       return NextResponse.json({ error: "Formato de dominio inválido" }, { status: 400 })
     }
