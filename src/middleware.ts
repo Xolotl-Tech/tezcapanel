@@ -21,9 +21,9 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Todas las otras rutas necesitan sesión
+  // Todas las otras rutas necesitan sesión con rol ADMIN
   const session = await auth()
-  if (!session) {
+  if (!session || session.user.role !== "ADMIN") {
     // Si es una API, retornar 401
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

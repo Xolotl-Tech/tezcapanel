@@ -55,6 +55,7 @@ export async function sendTelegramNotification(
       text: message,
       parse_mode: "HTML",
     }),
+    signal: AbortSignal.timeout(10000),
   })
 
   if (!response.ok) {
@@ -78,6 +79,7 @@ export async function sendSlackNotification(webhookUrl: string, message: string)
       text: message,
       mrkdwn: true,
     }),
+    signal: AbortSignal.timeout(10000),
   })
 
   if (!response.ok) {
@@ -126,6 +128,7 @@ export async function sendWhatsAppNotification(
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: formData,
+    signal: AbortSignal.timeout(10000),
   })
 
   if (!response.ok) {
@@ -167,6 +170,7 @@ export async function sendEmailNotification(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(10000),
     body: JSON.stringify({
       personalizations: [
         {
