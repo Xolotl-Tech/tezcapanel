@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import {
@@ -30,6 +31,7 @@ const CATEGORY_META: Record<string, { label: string; icon: React.ComponentType<{
 }
 
 export function SystemHardeningTab() {
+  const confirm = useConfirm()
   const { toast } = useToast()
   const [items, setItems] = useState<Item[]>([])
   const [agentUp, setAgentUp] = useState(true)
@@ -64,7 +66,7 @@ export function SystemHardeningTab() {
   }
 
   const applyAll = async () => {
-    if (!confirm("¿Aplicar todas las recomendaciones? Esto modificará sysctl y archivos de sistema.")) return
+    if (!(await confirm("¿Aplicar todas las recomendaciones? Esto modificará sysctl y archivos de sistema."))) return
     setApplying("__all__")
     const res = await fetch("/api/security/hardening/apply", {
       method: "POST",

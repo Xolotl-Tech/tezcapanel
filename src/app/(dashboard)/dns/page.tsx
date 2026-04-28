@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { CreateZoneDialog } from "@/components/dns/create-zone-dialog"
 import { CreateRecordDialog } from "@/components/dns/create-record-dialog"
@@ -70,6 +71,7 @@ const TYPE_COLORS: Record<string, string> = {
 type Tab = "domains" | "providers" | "logs"
 
 export default function DnsPage() {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>("domains")
 
   // Domain management
@@ -174,7 +176,7 @@ export default function DnsPage() {
   }
 
   async function handleDeleteZone(zone: Zone) {
-    if (!confirm(`¿Eliminar la zona ${zone.domain} y todos sus registros?`)) return
+    if (!(await confirm(`¿Eliminar la zona ${zone.domain} y todos sus registros?`))) return
     await fetch(`/api/dns/zones/${zone.id}`, { method: "DELETE" })
     if (selectedZone?.id === zone.id) setSelectedZone(null)
     await fetchZones()
@@ -203,7 +205,7 @@ export default function DnsPage() {
   }
 
   async function handleDeleteRecord(rec: DnsRecord) {
-    if (!confirm(`¿Eliminar el registro ${rec.type} ${rec.name}?`)) return
+    if (!(await confirm(`¿Eliminar el registro ${rec.type} ${rec.name}?`))) return
     await fetch(`/api/dns/records/${rec.id}`, { method: "DELETE" })
     if (selectedZone) await fetchRecords(selectedZone.id)
   }
@@ -237,7 +239,7 @@ export default function DnsPage() {
 
   async function handleDeleteProvider(p: Provider) {
     if (p.isBuiltIn) return
-    if (!confirm(`¿Eliminar el provider "${p.alias}"?`)) return
+    if (!(await confirm(`¿Eliminar el provider "${p.alias}"?`))) return
     const res = await fetch(`/api/dns/providers/${p.id}`, { method: "DELETE" })
     const json = await safeJson(res)
     if (!res.ok) {

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Toggle } from "@/components/security/toggle"
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export function SecurityConfigDialog({ open, onClose, onSaved }: Props) {
+  const confirm = useConfirm()
   const { toast } = useToast()
   const [data, setData] = useState<ServerData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -107,7 +109,7 @@ export function SecurityConfigDialog({ open, onClose, onSaved }: Props) {
 
   const toggleFail2ban = async (enabled: boolean) => {
     if (enabled && !data?.agentCheck.fail2banInstalled) {
-      if (!confirm("Fail2ban no está instalado. ¿Instalarlo ahora?")) return
+      if (!(await confirm("Fail2ban no está instalado. ¿Instalarlo ahora?"))) return
       const ok = await act({ action: "install-fail2ban" }, "Fail2ban instalado y activado")
       if (!ok) return
       return

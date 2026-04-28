@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AddRuleDialog } from "@/components/security/add-rule-dialog"
@@ -26,6 +27,7 @@ type SubTab = "port" | "ip" | "forward" | "area"
 type DirFilter = "all" | "inbound" | "outbound"
 
 export function FirewallTab() {
+  const confirm = useConfirm()
   const { toast } = useToast()
   const [enabled, setEnabled] = useState(false)
   const [blockIcmp, setBlockIcmp] = useState(false)
@@ -91,7 +93,7 @@ export function FirewallTab() {
   }
 
   const deleteRule = async (id: string) => {
-    if (!confirm("¿Eliminar esta regla?")) return
+    if (!(await confirm("¿Eliminar esta regla?"))) return
     const res = await fetch(`/api/security/firewall/rules/${id}`, { method: "DELETE" })
     if (!res.ok) {
       const d = await safeJson(res)

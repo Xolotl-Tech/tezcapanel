@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   if (!r.ok) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })
 
   await prisma.auditLog.create({
-    data: { userId: session.user.id, action: `server_security_${action}`, metadata: JSON.stringify(body) },
+    data: { userId: session.user.id, action: `server_security_${action}`, metadata: JSON.stringify({ action }) },
   })
 
   return NextResponse.json({ ok: true })

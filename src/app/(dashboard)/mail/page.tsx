@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { CreateDomainDialog } from "@/components/mail/create-domain-dialog"
 import { CreateAccountDialog } from "@/components/mail/create-account-dialog"
@@ -41,6 +42,7 @@ interface MailAlias {
 type Tab = "accounts" | "aliases" | "domains"
 
 export default function MailPage() {
+  const confirm = useConfirm()
   const [tab, setTab] = useState<Tab>("accounts")
 
   const [domains, setDomains] = useState<MailDomain[]>([])
@@ -104,7 +106,7 @@ export default function MailPage() {
   }
 
   async function handleDeleteDomain(id: string, domain: string) {
-    if (!confirm(`¿Eliminar el dominio ${domain}?`)) return
+    if (!(await confirm(`¿Eliminar el dominio ${domain}?`))) return
     await fetch(`/api/mail/domains/${id}`, { method: "DELETE" })
     await fetchAll()
   }
@@ -141,7 +143,7 @@ export default function MailPage() {
   }
 
   async function handleDeleteAccount(id: string, email: string) {
-    if (!confirm(`¿Eliminar la cuenta ${email}?`)) return
+    if (!(await confirm(`¿Eliminar la cuenta ${email}?`))) return
     await fetch(`/api/mail/accounts/${id}`, { method: "DELETE" })
     await fetchAll()
   }
@@ -170,7 +172,7 @@ export default function MailPage() {
   }
 
   async function handleDeleteAlias(id: string, source: string) {
-    if (!confirm(`¿Eliminar el alias ${source}?`)) return
+    if (!(await confirm(`¿Eliminar el alias ${source}?`))) return
     await fetch(`/api/mail/aliases/${id}`, { method: "DELETE" })
     await fetchAll()
   }

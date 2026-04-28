@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { TerminalEmulator, type RemoteTarget, type TerminalApi } from "@/components/terminal/terminal-emulator"
 import { Badge } from "@/components/ui/badge"
 import { Terminal, Wifi, WifiOff, X } from "lucide-react"
@@ -17,6 +18,7 @@ interface Tab {
 }
 
 export default function TerminalPage() {
+  const confirm = useConfirm()
   const [token, setToken] = useState("")
   const [loading, setLoading] = useState(true)
   const [tabs, setTabs] = useState<Tab[]>([{ key: "local", label: "Local server", target: "local" }])
@@ -63,7 +65,7 @@ export default function TerminalPage() {
   }
 
   const onDeleteCommand = async (id: string) => {
-    if (!confirm("¿Eliminar este comando?")) return
+    if (!(await confirm("¿Eliminar este comando?"))) return
     await fetch(`/api/terminal/commands/${id}`, { method: "DELETE" })
     loadCommands()
   }
@@ -91,7 +93,7 @@ export default function TerminalPage() {
   }
 
   const onDeleteServer = async (id: string) => {
-    if (!confirm("¿Eliminar este servidor?")) return
+    if (!(await confirm("¿Eliminar este servidor?"))) return
     await fetch(`/api/terminal/servers/${id}`, { method: "DELETE" })
     loadServers()
   }

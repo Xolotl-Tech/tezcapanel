@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
 import { MetricsProvider } from "@/components/dashboard/metrics-provider"
+import { ConfirmProvider } from "@/components/ui/confirm-dialog"
 
 export default async function DashboardLayout({
   children,
@@ -19,7 +20,9 @@ export default async function DashboardLayout({
         <Topbar user={session.user} />
         <main className="flex-1 overflow-y-auto p-6">
           <MetricsProvider>
-            {children}
+            <ConfirmProvider>
+              {children}
+            </ConfirmProvider>
           </MetricsProvider>
         </main>
       </div>

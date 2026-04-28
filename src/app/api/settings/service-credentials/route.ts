@@ -6,7 +6,7 @@ import { encryptOptional } from "@/lib/crypto"
 // GET — obtener credenciales (sin exponer tokens completos)
 export async function GET() {
   const session = await auth()
-  if (!session?.user?.id) {
+  if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -28,7 +28,7 @@ export async function GET() {
 // PATCH — guardar credenciales
 export async function PATCH(req: NextRequest) {
   const session = await auth()
-  if (!session?.user?.id) {
+  if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 

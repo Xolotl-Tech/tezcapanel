@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Globe, Lock, MoreVertical, Power, Trash2, ExternalLink } from "lucide-react"
@@ -30,6 +31,7 @@ interface SiteCardProps {
 }
 
 export function SiteCard({ site, onToggle, onDelete }: SiteCardProps) {
+  const confirm = useConfirm()
   const [loading, setLoading] = useState(false)
 
   async function handleToggle() {
@@ -39,7 +41,7 @@ export function SiteCard({ site, onToggle, onDelete }: SiteCardProps) {
   }
 
   async function handleDelete() {
-    if (!confirm(`¿Eliminar el sitio ${site.domain}?`)) return
+    if (!(await confirm(`¿Eliminar el sitio ${site.domain}?`))) return
     setLoading(true)
     await onDelete(site.id, site.domain)
     setLoading(false)

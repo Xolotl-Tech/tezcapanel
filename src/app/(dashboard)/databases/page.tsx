@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { CreateDatabaseDialog } from "@/components/databases/create-database-dialog"
 import { ChangePasswordDialog } from "@/components/databases/change-password-dialog"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ interface DB {
 }
 
 export default function DatabasesPage() {
+  const confirm = useConfirm()
   const [databases, setDatabases] = useState<DB[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -53,7 +55,7 @@ export default function DatabasesPage() {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`¿Eliminar la base de datos ${name}?`)) return
+    if (!(await confirm(`¿Eliminar la base de datos ${name}?`))) return
     await fetch(`/api/databases/${id}`, { method: "DELETE" })
     await fetchDatabases()
   }
@@ -69,7 +71,7 @@ export default function DatabasesPage() {
   }
 
   async function handleBackup(id: string, name: string) {  // ← aquí
-  if (!confirm(`¿Crear backup de ${name}?`)) return
+  if (!(await confirm(`¿Crear backup de ${name}?`))) return
   
   const res = await fetch(`/api/databases/${id}/backup`, { method: "POST" })
   const data = await res.json()

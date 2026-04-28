@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/use-toast"
@@ -47,6 +48,7 @@ const TEMPLATE_LABELS: Record<string, string> = {
 }
 
 export default function WpToolkitPage() {
+  const confirm = useConfirm()
   const { toast } = useToast()
   const [sites, setSites] = useState<WpSite[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -102,7 +104,7 @@ export default function WpToolkitPage() {
   }
 
   const removeSite = async (id: string, domain: string) => {
-    if (!confirm(`¿Eliminar el sitio ${domain}? Esto borra archivos y la base de datos.`)) return
+    if (!(await confirm(`¿Eliminar el sitio ${domain}? Esto borra archivos y la base de datos.`))) return
     const res = await fetch(`/api/wp/sites/${id}`, { method: "DELETE" })
     const d = await safeJson(res)
     if (!res.ok) {
