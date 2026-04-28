@@ -7,7 +7,7 @@ import { friendlyError } from "@/lib/agent-errors"
 export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const { jail, ip } = await req.json()
+  const { jail, ip } = await req.json().catch(() => ({}))
   if (!jail || !ip) return NextResponse.json({ error: "jail e ip requeridos" }, { status: 400 })
   const r = await bruteForceAgent.ban(jail, ip)
   if (!r.ok) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })

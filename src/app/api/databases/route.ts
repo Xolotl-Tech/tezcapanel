@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { name, user, password } = await req.json()
+  const { name, user, password } = await req.json().catch(() => ({}))
 
   if (!name || !user || !password) {
     return NextResponse.json({ error: "name, user y password son requeridos" }, { status: 400 })

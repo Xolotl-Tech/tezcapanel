@@ -34,7 +34,7 @@ export async function POST(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const { type, name, value, ttl, priority } = await req.json()
+    const { type, name, value, ttl, priority } = await req.json().catch(() => ({}))
 
     if (!type || !VALID_TYPES.includes(type)) {
       return NextResponse.json({ error: "Tipo de registro inválido" }, { status: 400 })

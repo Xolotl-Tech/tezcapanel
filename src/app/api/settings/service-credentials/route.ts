@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest) {
     twilioPhoneNumber,
     sendgridApiKey,
     sendgridFromEmail,
-  } = await req.json()
+  } = await req.json().catch(() => ({}))
 
   // Validaciones básicas
   if (telegramBotToken && !telegramBotToken.includes(":")) {

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
+import { encryptOptional } from "@/lib/crypto"
 import { NextResponse } from "next/server"
 
 export async function GET() {
@@ -20,7 +21,8 @@ export async function POST(req: Request) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   const { host, port, username, authType, password, privateKey, remarks } = body
 
   if (!host || !username) {
@@ -39,8 +41,8 @@ export async function POST(req: Request) {
       port: Number(port) || 22,
       username: String(username).trim(),
       authType: authType === "key" ? "key" : "password",
-      password: authType === "password" ? password : null,
-      privateKey: authType === "key" ? privateKey : null,
+      password: authType === "password" ? encryptOptional(password) : null,
+      privateKey: authType === "key" ? encryptOptional(privateKey) : null,
       remarks: remarks || null,
     },
     select: {

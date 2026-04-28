@@ -13,7 +13,7 @@ export async function PATCH(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const { password, quotaMB, active } = await req.json()
+    const { password, quotaMB, active } = await req.json().catch(() => ({}))
 
     const record = await prisma.mailAccount.findUnique({ where: { id } })
     if (!record) return NextResponse.json({ error: "Cuenta no encontrada" }, { status: 404 })

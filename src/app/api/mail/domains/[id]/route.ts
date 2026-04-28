@@ -12,7 +12,7 @@ export async function PATCH(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const { spf, dkim, dmarc, active } = await req.json()
+    const { spf, dkim, dmarc, active } = await req.json().catch(() => ({}))
 
     const record = await prisma.mailDomain.findUnique({ where: { id } })
     if (!record) return NextResponse.json({ error: "Dominio no encontrado" }, { status: 404 })

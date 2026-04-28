@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma"
 import bcrypt from "bcryptjs"
 
 export async function POST(req: NextRequest) {
-  const { name, email, password } = await req.json()
+  const { name, email, password } = await req.json().catch(() => ({}))
 
   if (!name || !email || !password) {
     return NextResponse.json(

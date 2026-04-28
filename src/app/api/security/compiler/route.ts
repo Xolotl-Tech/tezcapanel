@@ -17,7 +17,7 @@ export async function GET() {
 export async function PATCH(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const { key, enabled } = await req.json()
+  const { key, enabled } = await req.json().catch(() => ({}))
   if (!key || typeof enabled !== "boolean") {
     return NextResponse.json({ error: "key y enabled requeridos" }, { status: 400 })
   }

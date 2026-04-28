@@ -93,20 +93,44 @@ export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { messages } = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
+
+  const { messages } = body
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return NextResponse.json({ error: "messages must be a non-empty array" }, { status: 400 })
+  }
+  if (messages.length > 50) {
+    return NextResponse.json({ error: "Too many messages" }, { status: 400 })
+  }
+  const validRoles = new Set(["user", "assistant"])
+  for (const m of messages) {
+    if (!m || typeof m.role !== "string" || !validRoles.has(m.role) || typeof m.content !== "string") {
+      return NextResponse.json({ error: "Invalid message format" }, { status: 400 })
+    }
+    if (m.content.length > 10000) {
+      return NextResponse.json({ error: "Message content too long" }, { status: 400 })
+    }
+  }
 
   const context = await getServerContext()
   const systemPrompt = buildSystemPrompt(context)
 
-  const response = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: messages.map((m: { role: string; content: string }) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
-  })
+  let response
+  try {
+    response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: messages.map((m: { role: string; content: string }) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "AI service error"
+    return NextResponse.json({ error: msg }, { status: 502 })
+  }
 
   const content = response.content[0]
   if (content.type !== "text") {

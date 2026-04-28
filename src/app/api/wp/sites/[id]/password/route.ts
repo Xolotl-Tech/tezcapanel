@@ -8,7 +8,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const { id } = await params
-  const { password } = await req.json()
+  const { password } = await req.json().catch(() => ({}))
   if (!password || password.length < 8) return NextResponse.json({ error: "Mínimo 8 caracteres" }, { status: 400 })
 
   const site = await prisma.wpSite.findUnique({ where: { id }, include: { website: true } })

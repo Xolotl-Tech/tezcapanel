@@ -19,7 +19,8 @@ export async function PATCH(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   const r = await sshAgent.updateConfig(body)
   if (!r.ok) return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })
 

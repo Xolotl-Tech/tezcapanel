@@ -9,15 +9,20 @@ export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   const { action } = body
 
   let r: { ok: boolean; error?: string } = { ok: false, error: "Acción no soportada" }
 
   switch (action) {
-    case "set-ssh-port":
-      r = await sshAgent.updateConfig({ port: parseInt(body.port, 10) })
+    case "set-ssh-port": {
+      const port = parseInt(body.port, 10)
+      if (isNaN(port) || port < 1 || port > 65535)
+        return NextResponse.json({ error: "Puerto inválido (1-65535)" }, { status: 400 })
+      r = await sshAgent.updateConfig({ port })
       break
+    }
     case "set-password-length":
       r = await serverSecurityAgent.setPasswordLength(parseInt(body.min, 10))
       break

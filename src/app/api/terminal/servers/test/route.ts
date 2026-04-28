@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { host, port, username, authType, password, privateKey } = await req.json()
+  const { host, port, username, authType, password, privateKey } = await req.json().catch(() => ({}))
 
   if (!host || !username) {
     return NextResponse.json({ ok: false, error: "host y username requeridos" }, { status: 400 })

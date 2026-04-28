@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
+import { decrypt } from "@/lib/crypto"
 import { NextResponse } from "next/server"
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -24,5 +25,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     },
   })
   if (!server) return NextResponse.json({ error: "not found" }, { status: 404 })
-  return NextResponse.json({ server })
+  return NextResponse.json({
+    server: {
+      ...server,
+      password: server.password ? decrypt(server.password) : null,
+      privateKey: server.privateKey ? decrypt(server.privateKey) : null,
+    },
+  })
 }

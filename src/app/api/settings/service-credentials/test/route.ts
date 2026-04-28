@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const { service, credentials } = (await req.json()) as TestRequest
+  const { service, credentials } = (await req.json().catch(() => null)) as TestRequest
 
   try {
     if (service === "telegram") {

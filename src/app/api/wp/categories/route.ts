@@ -32,7 +32,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-  const { name, color } = await req.json()
+  const { name, color } = await req.json().catch(() => ({}))
   if (!name) return NextResponse.json({ error: "name requerido" }, { status: 400 })
   const cat = await prisma.wpCategory.create({ data: { name, color: color ?? "#10b981" } })
   return NextResponse.json({ category: cat })

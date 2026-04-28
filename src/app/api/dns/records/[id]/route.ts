@@ -12,7 +12,7 @@ export async function PATCH(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const data = await req.json()
+    const data = await req.json().catch(() => null)
 
     const record = await prisma.dnsRecord.findUnique({ where: { id }, include: { zone: true } })
     if (!record) return NextResponse.json({ error: "Registro no encontrado" }, { status: 404 })

@@ -12,7 +12,7 @@ export async function PATCH(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const { destination, active } = await req.json()
+    const { destination, active } = await req.json().catch(() => ({}))
 
     const record = await prisma.mailAlias.findUnique({ where: { id } })
     if (!record) return NextResponse.json({ error: "Alias no encontrado" }, { status: 404 })

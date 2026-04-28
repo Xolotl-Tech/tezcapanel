@@ -35,7 +35,7 @@ export async function PATCH(
     if (!session || session.user.role !== "ADMIN") return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { id } = await context.params
-    const data = await req.json()
+    const data = await req.json().catch(() => null)
 
     const zone = await prisma.dnsZone.findUnique({ where: { id } })
     if (!zone) return NextResponse.json({ error: "Zona no encontrada" }, { status: 404 })

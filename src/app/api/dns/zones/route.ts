@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { domain, primaryNs, adminEmail, serverIp, providerId } = await req.json()
+    const { domain, primaryNs, adminEmail, serverIp, providerId } = await req.json().catch(() => ({}))
 
     if (!domain) return NextResponse.json({ error: "El dominio es requerido" }, { status: 400 })
 
