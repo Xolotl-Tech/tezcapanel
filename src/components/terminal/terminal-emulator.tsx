@@ -104,10 +104,10 @@ export function TerminalEmulator({ token: tokenProp, target, remote, onReady, on
       fitRef.current = fitAddon
 
       const proto = window.location.protocol === "https:" ? "wss" : "ws"
-      const host = window.location.hostname || "127.0.0.1"
-      // Token viaja en Sec-WebSocket-Protocol (no en URL → fuera de logs/historial).
+      // El custom server (server.js) tunelea /ws/terminal al agente loopback,
+      // así no exponemos un segundo puerto al exterior. Token via subprotocolo.
       const ws = new WebSocket(
-        `${proto}://${host}:7071?target=${target}`,
+        `${proto}://${window.location.host}/ws/terminal?target=${target}`,
         [`tezca-term.${token}`],
       )
       wsRef.current = ws
@@ -144,7 +144,7 @@ export function TerminalEmulator({ token: tokenProp, target, remote, onReady, on
       ws.onerror = () => {
         if (!connected) {
           setStatus("error")
-          setErrorMsg(`No se pudo conectar al agente en ${host}:7071. Verifica que tezcaagent esté corriendo en el servidor.`)
+          setErrorMsg("No se pudo conectar al agente. Verifica que tezcaagent esté corriendo en el servidor.")
         }
       }
 
