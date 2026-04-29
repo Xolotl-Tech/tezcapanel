@@ -19,8 +19,7 @@ interface Tab {
 
 export default function TerminalPage() {
   const confirm = useConfirm()
-  const [token, setToken] = useState("")
-  const [loading, setLoading] = useState(true)
+  const [agentReady, setAgentReady] = useState<boolean | null>(null)
   const [tabs, setTabs] = useState<Tab[]>([{ key: "local", label: "Local server", target: "local" }])
   const [activeKey, setActiveKey] = useState("local")
   const [servers, setServers] = useState<SshServerEntry[]>([])
@@ -30,12 +29,13 @@ export default function TerminalPage() {
   const [sideTab, setSideTab] = useState<"servers" | "commands">("servers")
   const apisRef = useRef<Map<string, TerminalApi>>(new Map())
 
+  // Probe inicial: verifica que el endpoint responde 200 (panel + AGENT_TOKEN ok).
+  // El token real se solicita dentro de cada TerminalEmulator (uno por conexión).
   useEffect(() => {
     const controller = new AbortController()
-    fetch("/api/terminal/token", { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => { setToken(data.token ?? ""); setLoading(false) })
-      .catch((err) => { if (err.name !== "AbortError") setLoading(false) })
+    fetch("/api/terminal/token", { signal: controller.signal, cache: "no-store" })
+      .then((r) => setAgentReady(r.ok))
+      .catch((err) => { if (err.name !== "AbortError") setAgentReady(false) })
     return () => controller.abort()
   }, [])
 
@@ -120,11 +120,11 @@ export default function TerminalPage() {
         </div>
         <Badge
           variant="outline"
-          className={token
+          className={agentReady
             ? "border-primary/50 text-primary text-[10px]"
             : "border-border text-muted-foreground text-[10px]"}
         >
-          {token
+          {agentReady
             ? <><Wifi className="w-3 h-3 mr-1" />Conectado</>
             : <><WifiOff className="w-3 h-3 mr-1" />Desconectado</>}
         </Badge>
@@ -156,7 +156,7 @@ export default function TerminalPage() {
           </div>
 
           <div className="flex-1 min-h-0">
-            {loading ? (
+            {agentReady === null ? (
               <div className="w-full h-full rounded-lg bg-[#0d0d0d] border border-border flex items-center justify-center">
                 <p className="text-sm text-muted-foreground">Iniciando terminal...</p>
               </div>
@@ -164,7 +164,6 @@ export default function TerminalPage() {
               tabs.map((t) => (
                 <div key={t.key} className={`w-full h-full ${activeKey === t.key ? "block" : "hidden"}`}>
                   <TerminalEmulator
-                    token={token}
                     target={t.target}
                     remote={t.remote}
                     onReady={(api) => apisRef.current.set(t.key, api)}

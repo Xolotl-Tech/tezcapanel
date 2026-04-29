@@ -54,7 +54,15 @@ export default function AIPage() {
         signal: AbortSignal.timeout(30000),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || typeof data.text !== "string") {
+        updateMessage(assistantId, {
+          content: "💤 Oops, parece que Byte está dormido o recibiendo una actualización. Te avisaremos cuando esté en línea.",
+          timestamp: new Date(),
+        })
+        return
+      }
 
       updateMessage(assistantId, {
         content: data.text,
@@ -63,7 +71,7 @@ export default function AIPage() {
       })
     } catch {
       updateMessage(assistantId, {
-        content: "Lo siento, ocurrió un error al conectar con la IA. Intenta de nuevo.",
+        content: "💤 Oops, parece que Byte está dormido o recibiendo una actualización. Te avisaremos cuando esté en línea.",
         timestamp: new Date(),
       })
     } finally {

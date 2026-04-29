@@ -17,7 +17,8 @@ export interface TerminalApi {
 }
 
 interface TerminalEmulatorProps {
-  token: string
+  /** Si está vacío, el emulador pedirá su propio token efímero. */
+  token?: string
   target: "local" | "ssh"
   /** Required when target === "ssh". Fetched server-side and passed in. */
   remote?: RemoteTarget
@@ -25,7 +26,15 @@ interface TerminalEmulatorProps {
   onClosed?: () => void
 }
 
-export function TerminalEmulator({ token, target, remote, onReady, onClosed }: TerminalEmulatorProps) {
+async function fetchTerminalToken(): Promise<string> {
+  const r = await fetch("/api/terminal/token", { cache: "no-store" })
+  if (!r.ok) throw new Error(`token ${r.status}`)
+  const data = await r.json()
+  if (!data?.token) throw new Error("token vacío")
+  return data.token as string
+}
+
+export function TerminalEmulator({ token: tokenProp, target, remote, onReady, onClosed }: TerminalEmulatorProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting")
   const [errorMsg, setErrorMsg] = useState("")
@@ -34,13 +43,24 @@ export function TerminalEmulator({ token, target, remote, onReady, onClosed }: T
   const fitRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null)
 
   useEffect(() => {
-    if (!terminalRef.current || !token) return
+    if (!terminalRef.current) return
     if (target === "ssh" && !remote) return
 
     let disposed = false
     let connected = false
 
     async function init() {
+      let token = tokenProp
+      if (!token) {
+        try { token = await fetchTerminalToken() } catch (err) {
+          if (!disposed) {
+            setStatus("error")
+            setErrorMsg(err instanceof Error ? err.message : "No se pudo obtener token")
+          }
+          return
+        }
+      }
+
       const { Terminal } = await import("@xterm/xterm")
       const { FitAddon } = await import("@xterm/addon-fit")
 
@@ -128,7 +148,16 @@ export function TerminalEmulator({ token, target, remote, onReady, onClosed }: T
         if (disposed) return
         if (e.code === 1008) {
           setStatus("error")
-          setErrorMsg("Token inválido. El AGENT_TOKEN del panel no coincide con el del agente.")
+          const reason = (e.reason || "").startsWith("Unauthorized:")
+            ? e.reason.split(":")[1]
+            : ""
+          setErrorMsg(
+            reason === "expired"
+              ? "Token de terminal expirado. Recarga la página para reconectar."
+              : reason === "replay"
+              ? "Token ya usado. Recarga la página para obtener uno nuevo."
+              : "No autorizado para abrir terminal."
+          )
           return
         }
         terminal.write("\r\n\x1b[31mConexión cerrada\x1b[0m\r\n")
@@ -166,7 +195,7 @@ export function TerminalEmulator({ token, target, remote, onReady, onClosed }: T
       wsRef.current?.close()
       xtermRef.current?.dispose()
     }
-  }, [token, target, remote])
+  }, [tokenProp, target, remote])
 
   return (
     <div className="relative w-full h-full rounded-lg overflow-hidden bg-[#0d0d0d] border border-border">

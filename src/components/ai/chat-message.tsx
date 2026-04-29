@@ -17,7 +17,8 @@ const riskConfig = {
   high:   { label: "Alto riesgo",  className: "border-destructive/50 text-destructive" },
 }
 
-function renderMarkdown(raw: string): string {
+function renderMarkdown(raw: string | undefined | null): string {
+  if (!raw) return ""
   const escaped = raw
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

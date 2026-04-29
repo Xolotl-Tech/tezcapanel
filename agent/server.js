@@ -1,6 +1,7 @@
 const http = require("http")
 const { exec } = require("child_process")
 const { promisify } = require("util")
+const crypto = require("crypto")
 const fs = require("fs")
 const path = require("path")
 const { WebSocketServer } = require("ws")
@@ -1937,6 +1938,46 @@ function isAuthorized(req) {
   return auth === `Bearer ${TOKEN}`
 }
 
+// --- Verificación de token efímero para WebSocket ---
+// Formato: v1.<base64url(payload)>.<base64url(sig)>
+// payload = { s: "term", u: <userId>, e: <expMs>, j: <jti> }
+// sig     = HMAC-SHA256(payloadB64, AGENT_TOKEN)
+//
+// Replay protection: cada jti se acepta una sola vez. Cleanup pasivo.
+const SEEN_JTI = new Map()
+const JTI_TTL_MS = 120_000
+
+function pruneJti() {
+  const now = Date.now()
+  for (const [j, exp] of SEEN_JTI) if (exp < now) SEEN_JTI.delete(j)
+}
+
+function b64urlDecode(s) {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4))
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64")
+}
+
+function verifyWsToken(token) {
+  if (typeof token !== "string") return { ok: false, reason: "format" }
+  const parts = token.split(".")
+  if (parts.length !== 3 || parts[0] !== "v1") return { ok: false, reason: "format" }
+  const [, payloadB64, sigB64] = parts
+  const expected = crypto.createHmac("sha256", TOKEN).update(payloadB64).digest()
+  let provided
+  try { provided = b64urlDecode(sigB64) } catch { return { ok: false, reason: "format" } }
+  if (provided.length !== expected.length) return { ok: false, reason: "signature" }
+  if (!crypto.timingSafeEqual(provided, expected)) return { ok: false, reason: "signature" }
+  let payload
+  try { payload = JSON.parse(b64urlDecode(payloadB64).toString("utf8")) } catch { return { ok: false, reason: "format" } }
+  if (payload.s !== "term") return { ok: false, reason: "scope" }
+  if (typeof payload.e !== "number" || payload.e < Date.now()) return { ok: false, reason: "expired" }
+  if (typeof payload.j !== "string" || !payload.j) return { ok: false, reason: "format" }
+  pruneJti()
+  if (SEEN_JTI.has(payload.j)) return { ok: false, reason: "replay" }
+  SEEN_JTI.set(payload.j, Date.now() + JTI_TTL_MS)
+  return { ok: true, payload }
+}
+
 function setHeaders(res) {
   res.setHeader("Content-Type", "application/json")
   res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000")
@@ -2239,8 +2280,9 @@ function startSshSession(ws, opts) {
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost")
   const token = url.searchParams.get("token")
-  if (token !== TOKEN) {
-    ws.close(1008, "Unauthorized")
+  const verified = verifyWsToken(token || "")
+  if (!verified.ok) {
+    ws.close(1008, `Unauthorized:${verified.reason}`)
     return
   }
 
