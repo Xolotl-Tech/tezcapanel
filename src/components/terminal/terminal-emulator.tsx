@@ -105,7 +105,11 @@ export function TerminalEmulator({ token: tokenProp, target, remote, onReady, on
 
       const proto = window.location.protocol === "https:" ? "wss" : "ws"
       const host = window.location.hostname || "127.0.0.1"
-      const ws = new WebSocket(`${proto}://${host}:7071?token=${encodeURIComponent(token)}&target=${target}`)
+      // Token viaja en Sec-WebSocket-Protocol (no en URL → fuera de logs/historial).
+      const ws = new WebSocket(
+        `${proto}://${host}:7071?target=${target}`,
+        [`tezca-term.${token}`],
+      )
       wsRef.current = ws
 
       ws.onopen = () => {

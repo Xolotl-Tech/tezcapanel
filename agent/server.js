@@ -1042,7 +1042,6 @@ function handleHardening(req, res) {
 }
 
 // --- Anti Intrusion ---
-const crypto = require("crypto")
 const CRITICAL_FILES = [
   "/etc/passwd", "/etc/shadow", "/etc/group", "/etc/sudoers",
   "/etc/ssh/sshd_config", "/etc/hosts", "/etc/crontab",
@@ -2177,9 +2176,41 @@ server.listen(PORT, HOST, () => {
 })
 
 // --- WebSocket Terminal ---
+// Por defecto sólo loopback. Para acceso LAN definir AGENT_WS_HOST=0.0.0.0 (o IP)
+// y AGENT_WS_ALLOWED_ORIGINS con la lista de orígenes permitidos del panel.
+const AGENT_WS_HOST = process.env.AGENT_WS_HOST || "127.0.0.1"
+const ALLOWED_ORIGINS = (process.env.AGENT_WS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const TERM_PROTO_PREFIX = "tezca-term."
+
+function pickTerminalProtocol(protocols) {
+  // ws@8: protocols puede ser Set o array según versión.
+  const arr = Array.isArray(protocols) ? protocols : [...(protocols || [])]
+  const found = arr.find((p) => typeof p === "string" && p.startsWith(TERM_PROTO_PREFIX))
+  return found || false
+}
+
 const wss = new WebSocketServer({
   port: 7071,
-  host: "0.0.0.0",
+  host: AGENT_WS_HOST,
+  verifyClient: (info, cb) => {
+    // Si hay allowlist definida y el handshake trae Origin, debe coincidir.
+    // Origin ausente sólo se acepta cuando el bind es loopback (clientes no-browser locales).
+    const origin = info.req.headers.origin
+    if (ALLOWED_ORIGINS.length > 0) {
+      if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
+        return cb(false, 403, "origin not allowed")
+      }
+    } else if (origin && AGENT_WS_HOST !== "127.0.0.1" && AGENT_WS_HOST !== "localhost") {
+      // Bind público sin allowlist explícita: rechazar para forzar configuración consciente.
+      return cb(false, 403, "origin not allowed (configure AGENT_WS_ALLOWED_ORIGINS)")
+    }
+    return cb(true)
+  },
+  handleProtocols: pickTerminalProtocol,
 })
 
 function startLocalPty(ws) {
@@ -2279,8 +2310,12 @@ function startSshSession(ws, opts) {
 
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://localhost")
-  const token = url.searchParams.get("token")
-  const verified = verifyWsToken(token || "")
+  // El token se transporta en Sec-WebSocket-Protocol como `tezca-term.<token>`.
+  // No usamos la query string para evitar logs de proxy/historial del navegador.
+  const proto = req.headers["sec-websocket-protocol"] || ""
+  const selected = proto.split(",").map((s) => s.trim()).find((p) => p.startsWith(TERM_PROTO_PREFIX))
+  const token = selected ? selected.slice(TERM_PROTO_PREFIX.length) : ""
+  const verified = verifyWsToken(token)
   if (!verified.ok) {
     ws.close(1008, `Unauthorized:${verified.reason}`)
     return
