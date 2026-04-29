@@ -3,12 +3,21 @@ import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { wpAgent } from "@/lib/wp-agent"
 import { friendlyError } from "@/lib/agent-errors"
+import { randomBytes } from "crypto"
 
-function randomPassword(len = 16) {
+function randomPassword(len = 20) {
   const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
-  let s = ""
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)]
-  return s
+  // CSPRNG: descartamos el sesgo del módulo usando un buffer 4x y filtrando.
+  const out = []
+  const buf = randomBytes(len * 4)
+  for (let i = 0; out.length < len && i < buf.length; i++) {
+    const b = buf[i]
+    if (b < Math.floor(256 / chars.length) * chars.length) {
+      out.push(chars[b % chars.length])
+    }
+  }
+  if (out.length < len) return randomPassword(len)
+  return out.join("")
 }
 
 function dbNameFromDomain(domain: string) {
@@ -126,11 +135,8 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ site: wpSite })
   } catch (err) {
+    // Detalles completos sólo en server-side log; nunca al cliente.
     console.error("[api/wp/sites POST] uncaught", err)
-    return NextResponse.json({
-      error: err instanceof Error ? err.message : "Error interno",
-      raw: err instanceof Error ? err.message : String(err),
-      stack: process.env.NODE_ENV === "development" && err instanceof Error ? err.stack?.split("\n").slice(0, 5).join("\n") : undefined,
-    }, { status: 500 })
+    return NextResponse.json({ error: "Error interno" }, { status: 500 })
   }
 }

@@ -6,7 +6,28 @@ import { check as rlCheck, clientIp } from "@/lib/rate-limit"
 
 const SETUP_LIMIT = { windowMs: 60 * 60_000, max: 10, blockMs: 60 * 60_000 }
 
+function sameOrigin(req: NextRequest): boolean {
+  // CSRF defense: el browser incluye Origin en cualquier request fetch/XHR
+  // que cambie estado. Si no coincide con el host del panel, rechazamos.
+  const origin = req.headers.get("origin")
+  if (!origin) return false
+  try {
+    const o = new URL(origin)
+    const host = req.headers.get("host")
+    if (host && o.host === host) return true
+    const expected = process.env.NEXTAUTH_URL
+    if (expected && o.host === new URL(expected).host) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
 export async function POST(req: NextRequest) {
+  if (!sameOrigin(req)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+
   const ip = clientIp(req.headers)
   const lim = rlCheck(`setup:${ip}`, SETUP_LIMIT)
   if (!lim.ok) {
