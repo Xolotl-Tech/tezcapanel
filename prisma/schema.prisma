@@ -25,6 +25,10 @@ model AuditLog {
   target    String?
   metadata  String?
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
 }
 
 model Website {

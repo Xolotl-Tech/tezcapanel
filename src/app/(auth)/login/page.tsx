@@ -17,11 +17,12 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" })
 
   useEffect(() => {
+    // 404 = panel ya configurado → quedarse en /login. JSON con hasUsers=false
+    // = setup pendiente → redirigir.
     fetch("/api/setup/check")
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data.hasUsers) router.push("/setup")
-      })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data && !data.hasUsers) router.push("/setup") })
+      .catch(() => {})
   }, [router])
 
   async function handleSubmit(e: React.FormEvent) {

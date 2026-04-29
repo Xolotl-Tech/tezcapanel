@@ -1979,8 +1979,11 @@ function verifyWsToken(token) {
 
 function setHeaders(res) {
   res.setHeader("Content-Type", "application/json")
-  res.setHeader("Access-Control-Allow-Origin", "http://localhost:3000")
-  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type")
+  // Sin CORS: el agente HTTP escucha sólo en 127.0.0.1, así que únicamente
+  // procesos del mismo host pueden alcanzarlo. El panel lo llama
+  // server-to-server desde Next (fetch desde Node, no desde el navegador),
+  // donde CORS no aplica. Cualquier intento desde un navegador local cae
+  // en cross-origin y queda bloqueado, que es lo deseado.
 }
 
 async function handleMetrics(res) {
