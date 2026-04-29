@@ -174,16 +174,25 @@ export function TerminalEmulator({ token: tokenProp, target, remote, onReady, on
         }
       })
 
+      // Debounce: ResizeObserver puede dispararse 60+ veces durante transiciones
+      // de layout. fitAddon.fit() en cada llamada satura el event loop de xterm
+      // ("task queue exceeded allotted deadline") y gasta CPU sin beneficio
+      // visible — el último fit es el único que importa.
+      let resizeTimer: ReturnType<typeof setTimeout> | null = null
       const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit()
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }))
-        }
+        if (resizeTimer) clearTimeout(resizeTimer)
+        resizeTimer = setTimeout(() => {
+          try { fitAddon.fit() } catch {}
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "resize", cols: terminal.cols, rows: terminal.rows }))
+          }
+        }, 100)
       })
 
       if (terminalRef.current) resizeObserver.observe(terminalRef.current)
 
       return () => {
+        if (resizeTimer) clearTimeout(resizeTimer)
         resizeObserver.disconnect()
         ws.close()
         terminal.dispose()
