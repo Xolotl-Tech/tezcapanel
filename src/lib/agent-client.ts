@@ -30,16 +30,17 @@ export interface ServiceStatus {
 
 export async function agentFetch<T>(
   path: string,
-  options?: RequestInit
+  options?: RequestInit & { timeoutMs?: number }
 ): Promise<T> {
+  const { timeoutMs = 30000, signal, ...rest } = options ?? {}
   const res = await fetch(`${AGENT_URL}${path}`, {
-    ...options,
+    ...rest,
     headers: {
       Authorization: `Bearer ${AGENT_TOKEN}`,
       "Content-Type": "application/json",
-      ...options?.headers,
+      ...rest.headers,
     },
-    signal: AbortSignal.timeout(5000),
+    signal: signal ?? AbortSignal.timeout(timeoutMs),
   })
 
   if (!res.ok) {
