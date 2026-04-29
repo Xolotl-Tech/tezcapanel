@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Shield, Loader2, CheckCircle2 } from "lucide-react"
+import { validatePanelPassword } from "@/lib/password-policy"
 
 export default function SetupPage() {
   const router = useRouter()
@@ -32,8 +33,9 @@ export default function SetupPage() {
       return
     }
 
-    if (form.password.length < 8) {
-      setError("La contraseña debe tener al menos 8 caracteres")
+    const pw = validatePanelPassword(form.password)
+    if (!pw.ok) {
+      setError(pw.error || "Contraseña inválida")
       return
     }
 
@@ -117,11 +119,14 @@ export default function SetupPage() {
                   <Input
                     id="password"
                     type="password"
-                    placeholder="Mínimo 8 caracteres"
+                    placeholder="Mínimo 12 caracteres, con letras y dígitos"
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     className="bg-input border-border"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    12+ caracteres, al menos una letra y un dígito.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

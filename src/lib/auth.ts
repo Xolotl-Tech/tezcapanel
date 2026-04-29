@@ -4,6 +4,12 @@ import type { JWT } from "next-auth/jwt"
 import type { Session } from "next-auth"
 import { prisma } from "./prisma"
 import bcrypt from "bcryptjs"
+import { check as rlCheck, reset as rlReset, clientIp, maybeGc } from "./rate-limit"
+
+const LOGIN_LIMITS = {
+  perKey:  { windowMs: 15 * 60_000, max: 5,  blockMs: 15 * 60_000 }, // por IP+email
+  perIp:   { windowMs: 15 * 60_000, max: 50, blockMs: 15 * 60_000 }, // anti-enumeración
+}
 
 declare module "next-auth" {
   interface User {
@@ -31,6 +37,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) return null
 
+        const headers = (req as unknown as { headers?: Record<string, string | string[] | undefined> })?.headers ?? {}
+        const ip = clientIp(headers)
+        const email = String(credentials.email).toLowerCase()
+
+        maybeGc()
+        const ipLim = rlCheck(`login:ip:${ip}`, LOGIN_LIMITS.perIp)
+        const keyLim = rlCheck(`login:user:${ip}:${email}`, LOGIN_LIMITS.perKey)
+        if (!ipLim.ok || !keyLim.ok) {
+          // Devolver null sin distinguir motivo — no leak de info al cliente.
+          return null
+        }
+
         const user = await prisma.user.findUnique({
           where: { email: credentials.email as string },
         })
@@ -44,11 +62,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!valid) return null
 
+        // Login exitoso: limpiar bucket por usuario para no penalizar.
+        rlReset(`login:user:${ip}:${email}`)
+
         try {
-          const headers = (req as unknown as { headers?: Record<string, string | string[] | undefined> })?.headers ?? {}
-          const ipRaw = (headers["x-forwarded-for"] || headers["x-real-ip"] || "") as string
-          const ip = Array.isArray(ipRaw) ? ipRaw[0] : ipRaw.split(",")[0]?.trim()
-          const ua = (headers["user-agent"] as string) || ""
+          const ua = (headers["user-agent"] as string | undefined) || ""
           await prisma.auditLog.create({
             data: {
               userId: user.id,
