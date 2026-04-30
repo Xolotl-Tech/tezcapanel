@@ -5,11 +5,16 @@ const MIN_LEN = 12
 
 // Lista mínima de muy comunes — no es exhaustiva ni pretende serlo, sólo evita
 // los casos triviales más obvios. Para chequeo serio integrar HIBP (k-anonymity).
+//
+// Todas las entradas DEBEN cumplir las otras reglas (≥12 chars, ≥1 letra, ≥1
+// dígito) o nunca llegan a este check. Variantes que no cumplen no aportan.
 const COMMON = new Set([
-  "password", "password1", "password123", "passw0rd", "qwerty", "qwerty123",
-  "12345678", "123456789", "1234567890", "111111111", "11111111",
-  "letmein", "welcome", "admin123", "administrator", "iloveyou",
-  "abc123456", "tezcapanel", "tezcapanel1",
+  "password1234", "passwordpassword", "password123456",
+  "qwerty123456", "qwertyuiop12", "qwertyuiop123",
+  "1q2w3e4r5t6y", "1qaz2wsx3edc",
+  "iloveyou1234", "letmein12345", "welcome12345",
+  "tezcapanel12", "tezcapanel123", "tezcapanel2025", "tezcapanel2026",
+  "admin12345678", "administrator1",
 ])
 
 export interface PasswordCheck {
