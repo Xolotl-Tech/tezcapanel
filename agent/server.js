@@ -282,7 +282,7 @@ async function handleMailProvision(req, res) {
     } catch (err) {
       console.error("[mail/provision]", err)
       res.writeHead(500)
-      res.end(JSON.stringify({ error: err.message }))
+      res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -413,7 +413,7 @@ async function handleDnsProvision(req, res) {
     } catch (err) {
       console.error("[dns/provision]", err)
       res.writeHead(500)
-      res.end(JSON.stringify({ error: err.message }))
+      res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -539,7 +539,7 @@ function handleFirewallProvision(req, res) {
       }
     } catch (err) {
       console.error("[firewall/provision]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -718,7 +718,7 @@ function handleSshProvision(req, res) {
       }
     } catch (err) {
       console.error("[ssh/provision]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1037,7 +1037,7 @@ function handleWp(req, res) {
       }
     } catch (err) {
       console.error("[wp]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1163,7 +1163,7 @@ function handleHardening(req, res) {
       }
     } catch (err) {
       console.error("[hardening]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1355,7 +1355,7 @@ function handleIntrusion(req, res) {
       }
     } catch (err) {
       console.error("[intrusion]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1433,7 +1433,7 @@ function handleCompilerAccess(req, res) {
       }
     } catch (err) {
       console.error("[compiler-access]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1577,7 +1577,7 @@ function handleBruteForce(req, res) {
       }
     } catch (err) {
       console.error("[brute-force]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1819,7 +1819,7 @@ function handleWebsiteScan(req, res) {
       }))
     } catch (err) {
       console.error("[website/scan]", err)
-      res.writeHead(500); res.end(JSON.stringify({ ok: false, error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ ok: false, error: "internal_error" }))
     }
   })
 }
@@ -1912,7 +1912,7 @@ function handleServerSecurityAction(req, res) {
       }
     } catch (err) {
       console.error("[server-security/action]", err)
-      res.writeHead(500); res.end(JSON.stringify({ error: err.message }))
+      res.writeHead(500); res.end(JSON.stringify({ error: "internal_error" }))
     }
   })
 }
@@ -1978,7 +1978,7 @@ function handleServerSecurityCheck(req, res) {
       }))
     } catch (err) {
       res.writeHead(500)
-      res.end(JSON.stringify({ ok: false, error: err.message }))
+      res.end(JSON.stringify({ ok: false, error: "internal_error" }))
     }
   })()
 }
@@ -2231,7 +2231,7 @@ async function handleRestartService(name, res) {
     res.end(JSON.stringify(result))
   } catch (err) {
     res.writeHead(500)
-    res.end(JSON.stringify({ error: err.message }))
+    res.end(JSON.stringify({ error: "internal_error" }))
   }
 }
 
