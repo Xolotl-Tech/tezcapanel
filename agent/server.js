@@ -1,5 +1,5 @@
 const http = require("http")
-const { exec } = require("child_process")
+const { exec, execFile } = require("child_process")
 const { promisify } = require("util")
 const crypto = require("crypto")
 const fs = require("fs")
@@ -20,6 +20,45 @@ const os = require("os")
 const si = require("systeminformation")
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
+
+// --- Validadores defensivos en frontera del agente ---
+// El panel ya sanitiza la mayoría de estos campos, pero el agente NO debe
+// confiar en eso. execFile evita el shell, pero campos como --user_pass='X'
+// se pasan a wp-cli que sí parsea sus propios args; mejor rechazar valores
+// con caracteres peligrosos antes de llegar.
+
+// Identificador alfanumérico estricto (mysql user/db, role names, etc.)
+function isSafeIdent(s, max = 64) {
+  return typeof s === "string" && s.length > 0 && s.length <= max && /^[a-zA-Z0-9_]+$/.test(s)
+}
+
+// Hostname/dominio de DB: localhost, 127.0.0.1, IPs, FQDN.
+function isSafeDbHost(s) {
+  return typeof s === "string" && s.length > 0 && s.length <= 253 &&
+    /^[a-zA-Z0-9._-]+$/.test(s) && !s.includes("..")
+}
+
+// Ruta absoluta sin metacaracteres ni traversal. Usada para rootPath de WP.
+function isSafeAbsPath(s, prefix = "/var/www/") {
+  if (typeof s !== "string" || s.length === 0 || s.length > 4096) return false
+  if (!s.startsWith("/")) return false
+  if (prefix && !s.startsWith(prefix)) return false
+  if (s.includes("..")) return false
+  // sólo letras/dígitos/_/-/./ (no espacios, sin metacaracteres shell)
+  return /^[a-zA-Z0-9._\-/]+$/.test(s)
+}
+
+// Email RFC-light (mismo regex que validateEmail más arriba pero exportable).
+function isSafeEmail(s) {
+  return typeof s === "string" && s.length <= 254 &&
+    /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(s)
+}
+
+// User name de WP (alphanum + guiones bajos + algunos puntos/guiones).
+function isSafeWpUser(s) {
+  return typeof s === "string" && s.length > 0 && s.length <= 60 && /^[a-zA-Z0-9._@\-]+$/.test(s)
+}
 
 // --- Rutas de configuración de correo ---
 const MAIL_VIRTUAL_DOMAINS = "/etc/postfix/virtual_domains"
@@ -730,13 +769,39 @@ async function ensureWpCli() {
 
 async function wpRun(rootPath, args, timeout = 120000) {
   if (!WP_CLI) await ensureWpCli()
-  const cmd = `${WP_CLI} --path=${rootPath} --allow-root ${args}`
-  const { stdout, stderr } = await execAsync(cmd, { timeout })
+  if (!isSafeAbsPath(rootPath)) {
+    throw new Error(`rootPath inválido: ${rootPath}`)
+  }
+  // args puede venir como string (legacy) o array (nuevo, sin shell parsing).
+  const argv = Array.isArray(args)
+    ? [`--path=${rootPath}`, "--allow-root", ...args]
+    : [`--path=${rootPath}`, "--allow-root", ...args.split(/\s+/).filter(Boolean)]
+  const { stdout, stderr } = await execFileAsync(WP_CLI, argv, { timeout, maxBuffer: 10 * 1024 * 1024 })
   return { stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
 function shellEscape(s) {
   return String(s).replace(/'/g, "'\\''")
+}
+
+// Quote para literales de string en SQL de MySQL. Bloquea las secuencias que
+// pueden romper el parser cuando se inyectan en CREATE USER ... IDENTIFIED BY.
+function mysqlQuoteString(s) {
+  const str = String(s)
+  // eslint-disable-next-line no-control-regex
+  const escaped = str.replace(/[\\'\x00\n\r\x1a"]/g, (ch) => {
+    switch (ch) {
+      case "\\": return "\\\\"
+      case "'":  return "\\'"
+      case '"':  return '\\"'
+      case "\0": return "\\0"
+      case "\n": return "\\n"
+      case "\r": return "\\r"
+      case "\x1a": return "\\Z"
+      default: return ch
+    }
+  })
+  return `'${escaped}'`
 }
 
 function handleWp(req, res) {
@@ -759,43 +824,83 @@ function handleWp(req, res) {
             res.writeHead(400); res.end(JSON.stringify({ error: "faltan campos requeridos" })); return
           }
 
+          // Validación defensiva en frontera del agente — no confiar en el panel.
+          if (!validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "domain inválido" })); return
+          }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
+          if (!isSafeIdent(dbName)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "dbName inválido" })); return
+          }
+          if (!isSafeIdent(dbUser, 32)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "dbUser inválido" })); return
+          }
+          if (!isSafeDbHost(dbHost)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "dbHost inválido" })); return
+          }
+          if (!isSafeWpUser(adminUser)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "adminUser inválido" })); return
+          }
+          if (!isSafeEmail(adminEmail)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "adminEmail inválido" })); return
+          }
+          if (typeof adminPassword !== "string" || adminPassword.length < 8 || adminPassword.length > 256) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "adminPassword inválido" })); return
+          }
+
           try {
             await ensureWpCli()
             fs.mkdirSync(rootPath, { recursive: true })
 
-            // crear DB y usuario
-            const dbpEsc = shellEscape(dbPassword)
-            await execAsync(`mysql -e "CREATE DATABASE IF NOT EXISTS \\\`${dbName}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"`)
-            await execAsync(`mysql -e "CREATE USER IF NOT EXISTS '${dbUser}'@'${dbHost}' IDENTIFIED BY '${dbpEsc}'"`)
-            await execAsync(`mysql -e "GRANT ALL PRIVILEGES ON \\\`${dbName}\\\`.* TO '${dbUser}'@'${dbHost}'"`)
-            await execAsync(`mysql -e "FLUSH PRIVILEGES"`)
+            // crear DB y usuario — execFile evita el shell. dbName/dbUser ya
+            // pasaron isSafeIdent (sólo [a-zA-Z0-9_]) así que el backtick es
+            // seguro a nivel SQL parser de mysql.
+            const sqlCreateDb   = `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+            const sqlCreateUser = `CREATE USER IF NOT EXISTS '${dbUser}'@'${dbHost}' IDENTIFIED BY ${mysqlQuoteString(dbPassword)}`
+            const sqlGrant      = `GRANT ALL PRIVILEGES ON \`${dbName}\`.* TO '${dbUser}'@'${dbHost}'`
+            await execFileAsync("mysql", ["-e", sqlCreateDb])
+            await execFileAsync("mysql", ["-e", sqlCreateUser])
+            await execFileAsync("mysql", ["-e", sqlGrant])
+            await execFileAsync("mysql", ["-e", "FLUSH PRIVILEGES"])
 
             // descargar core
-            await wpRun(rootPath, `core download --locale=${language} --force`, 180000)
+            await wpRun(rootPath, ["core", "download", `--locale=${language}`, "--force"], 180000)
 
             // wp-config
-            await wpRun(rootPath, `config create --dbname='${dbName}' --dbuser='${dbUser}' --dbpass='${dbpEsc}' --dbhost='${dbHost}' --skip-check --force`)
+            await wpRun(rootPath, [
+              "config", "create",
+              `--dbname=${dbName}`, `--dbuser=${dbUser}`, `--dbpass=${dbPassword}`,
+              `--dbhost=${dbHost}`, "--skip-check", "--force",
+            ])
 
-            // install
-            const titleEsc = shellEscape(siteTitle)
-            const apEsc = shellEscape(adminPassword)
-            await wpRun(rootPath, `core install --url='https://${domain}' --title='${titleEsc}' --admin_user='${adminUser}' --admin_password='${apEsc}' --admin_email='${adminEmail}' --skip-email`, 180000)
+            // install — todos los args como elementos separados, sin shell.
+            await wpRun(rootPath, [
+              "core", "install",
+              `--url=https://${domain}`,
+              `--title=${siteTitle}`,
+              `--admin_user=${adminUser}`,
+              `--admin_password=${adminPassword}`,
+              `--admin_email=${adminEmail}`,
+              "--skip-email",
+            ], 180000)
 
             // permisos
             try {
-              await execAsync(`chown -R www-data:www-data ${rootPath}`)
+              await execFileAsync("chown", ["-R", "www-data:www-data", rootPath])
             } catch {}
 
             // template extras
             if (template === "ecommerce") {
-              await wpRun(rootPath, `plugin install woocommerce --activate`, 180000)
-              await wpRun(rootPath, `theme install storefront --activate`, 120000)
+              await wpRun(rootPath, ["plugin", "install", "woocommerce", "--activate"], 180000)
+              await wpRun(rootPath, ["theme",  "install", "storefront",   "--activate"], 120000)
             } else if (template === "landing") {
-              await wpRun(rootPath, `theme install astra --activate`, 120000)
+              await wpRun(rootPath, ["theme",  "install", "astra",        "--activate"], 120000)
             }
 
             // datos finales
-            const ver = await wpRun(rootPath, "core version").catch(() => ({ stdout: "" }))
+            const ver = await wpRun(rootPath, ["core", "version"]).catch(() => ({ stdout: "" }))
             res.end(JSON.stringify({ ok: true, version: ver.stdout }))
           } catch (e) {
             res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
@@ -805,18 +910,21 @@ function handleWp(req, res) {
 
         case "info": {
           const { rootPath } = data
-          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
           try {
             await ensureWpCli()
             const [ver, plugins, themes] = await Promise.all([
-              wpRun(rootPath, "core version").catch(() => ({ stdout: "" })),
-              wpRun(rootPath, "plugin list --status=active --format=count").catch(() => ({ stdout: "0" })),
-              wpRun(rootPath, "theme list --format=count").catch(() => ({ stdout: "0" })),
+              wpRun(rootPath, ["core", "version"]).catch(() => ({ stdout: "" })),
+              wpRun(rootPath, ["plugin", "list", "--status=active", "--format=count"]).catch(() => ({ stdout: "0" })),
+              wpRun(rootPath, ["theme",  "list", "--format=count"]).catch(() => ({ stdout: "0" })),
             ])
             let diskMB = 0
             try {
-              const { stdout } = await execAsync(`du -sm ${rootPath} | cut -f1`)
-              diskMB = parseInt(stdout.trim(), 10) || 0
+              // execFile sin shell: el `| cut` se reemplaza por parseo en Node.
+              const { stdout } = await execFileAsync("du", ["-sm", rootPath])
+              diskMB = parseInt(stdout.trim().split(/\s+/)[0], 10) || 0
             } catch {}
             res.end(JSON.stringify({
               ok: true,
@@ -833,12 +941,14 @@ function handleWp(req, res) {
 
         case "update-core": {
           const { rootPath } = data
-          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
           try {
             await ensureWpCli()
-            await wpRun(rootPath, "core update", 180000)
-            await wpRun(rootPath, "core update-db", 60000).catch(() => {})
-            const ver = await wpRun(rootPath, "core version").catch(() => ({ stdout: "" }))
+            await wpRun(rootPath, ["core", "update"], 180000)
+            await wpRun(rootPath, ["core", "update-db"], 60000).catch(() => {})
+            const ver = await wpRun(rootPath, ["core", "version"]).catch(() => ({ stdout: "" }))
             res.end(JSON.stringify({ ok: true, version: ver.stdout }))
           } catch (e) {
             res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
@@ -848,11 +958,18 @@ function handleWp(req, res) {
 
         case "change-password": {
           const { rootPath, user, password } = data
-          if (!rootPath || !user || !password) { res.writeHead(400); res.end(JSON.stringify({ error: "campos requeridos" })); return }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
+          if (!isSafeWpUser(user)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "user inválido" })); return
+          }
+          if (typeof password !== "string" || password.length < 1 || password.length > 256) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "password inválido" })); return
+          }
           try {
             await ensureWpCli()
-            const pwEsc = shellEscape(password)
-            await wpRun(rootPath, `user update '${user}' --user_pass='${pwEsc}'`)
+            await wpRun(rootPath, ["user", "update", user, `--user_pass=${password}`])
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
@@ -862,19 +979,24 @@ function handleWp(req, res) {
 
         case "auto-login": {
           const { rootPath, user } = data
-          if (!rootPath || !user) { res.writeHead(400); res.end(JSON.stringify({ error: "campos requeridos" })); return }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
+          if (!isSafeWpUser(user)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "user inválido" })); return
+          }
           try {
             await ensureWpCli()
-            // genera URL temporal de auto-login válida 5 min usando wp eval
+            // user ya pasó isSafeWpUser ([a-zA-Z0-9._@-]) — sin metacaracteres PHP.
             const phpEval = `
-              $u = get_user_by('login', '${shellEscape(user)}');
+              $u = get_user_by('login', '${user}');
               if (!$u) { echo 'ERR_NO_USER'; return; }
               $key = wp_generate_password(20, false);
               update_user_meta($u->ID, '_tezca_login_key', $key);
               update_user_meta($u->ID, '_tezca_login_exp', time() + 300);
               echo $key;
             `.replace(/\n/g, " ")
-            const { stdout } = await wpRun(rootPath, `eval "${phpEval}"`)
+            const { stdout } = await wpRun(rootPath, ["eval", phpEval])
             if (stdout === "ERR_NO_USER") { res.writeHead(404); res.end(JSON.stringify({ ok: false, error: "Usuario no existe" })); return }
             res.end(JSON.stringify({ ok: true, key: stdout, user }))
           } catch (e) {
@@ -885,19 +1007,24 @@ function handleWp(req, res) {
 
         case "uninstall": {
           const { rootPath, dbName, dbUser } = data
-          if (!rootPath) { res.writeHead(400); res.end(JSON.stringify({ error: "rootPath requerido" })); return }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
+          if (dbName !== undefined && !isSafeIdent(dbName)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "dbName inválido" })); return
+          }
+          if (dbUser !== undefined && !isSafeIdent(dbUser, 32)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "dbUser inválido" })); return
+          }
           try {
-            // borrar DB y usuario si se pasan
             if (dbName) {
-              try { await execAsync(`mysql -e "DROP DATABASE IF EXISTS \\\`${dbName}\\\`"`) } catch {}
+              try { await execFileAsync("mysql", ["-e", `DROP DATABASE IF EXISTS \`${dbName}\``]) } catch {}
             }
             if (dbUser) {
-              try { await execAsync(`mysql -e "DROP USER IF EXISTS '${dbUser}'@'localhost'"`) } catch {}
+              try { await execFileAsync("mysql", ["-e", `DROP USER IF EXISTS '${dbUser}'@'localhost'`]) } catch {}
             }
-            // borrar archivos
-            if (rootPath.startsWith("/var/www/") || rootPath.startsWith("/www/")) {
-              await execAsync(`rm -rf ${rootPath}`)
-            }
+            // borrar archivos — isSafeAbsPath ya forzó prefijo /var/www/.
+            await execFileAsync("rm", ["-rf", rootPath])
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.writeHead(500); res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.message) }))
