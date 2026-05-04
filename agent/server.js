@@ -1987,8 +1987,14 @@ function handleServerSecurityCheck(req, res) {
   })()
 }
 
-const PORT = 7070
-const HOST = "127.0.0.1"
+// HTTP del agente: por defecto loopback (el panel lo llama server-to-server).
+// Configurable por simetría con AGENT_WS_HOST, pero NO se recomienda exponerlo
+// fuera de loopback — no tiene rate limit ni TLS y el token Bearer es estático.
+const PORT = parseInt(process.env.AGENT_PORT || "7070", 10)
+const HOST = process.env.AGENT_HOST || "127.0.0.1"
+// Logs por conexión (PTY local / SSH abierta). Default off — para auditoría
+// real usar AuditLog del panel. Se activa con AGENT_LOG_VERBOSE=true.
+const LOG_VERBOSE = process.env.AGENT_LOG_VERBOSE === "true"
 const TOKEN = process.env.AGENT_TOKEN
 
 if (!TOKEN) {
@@ -2380,7 +2386,7 @@ function startLocalPty(ws) {
   ws.on("close", () => { try { ptyProcess.kill() } catch {} })
   ptyProcess.onExit(() => { if (ws.readyState === ws.OPEN) ws.close() })
 
-  console.log("✔ Terminal local conectada")
+  if (LOG_VERBOSE) console.log("✔ Terminal local conectada")
 }
 
 function startSshSession(ws, opts) {
@@ -2439,7 +2445,7 @@ function startSshSession(ws, opts) {
     ws.close()
   }
 
-  console.log(`✔ Terminal SSH conectada → ${opts.username}@${opts.host}:${opts.port}`)
+  if (LOG_VERBOSE) console.log(`✔ Terminal SSH conectada → ${opts.username}@${opts.host}:${opts.port}`)
 }
 
 wss.on("connection", (ws, req) => {
@@ -2487,4 +2493,4 @@ wss.on("connection", (ws, req) => {
 })
 
 
-console.log(`✔ Terminal WebSocket en ws://127.0.0.1:7071`)
+console.log(`✔ Terminal WebSocket en ws://${AGENT_WS_HOST}:7071`)

@@ -41,7 +41,9 @@ function nextWithCsp(req: NextRequest, isHtml: boolean): NextResponse {
   if (isHtml) {
     const isDev = process.env.NODE_ENV !== "production"
     res.headers.set("Content-Security-Policy", buildCsp(nonce, isDev))
-    res.headers.set("x-nonce", nonce)
+    // El nonce viaja sólo en el request header (para que server components lo
+    // lean vía headers()) y dentro de los <script nonce="..."> renderizados.
+    // No tiene sentido echolo en el response header — el navegador no lo usa.
   }
   return res
 }
