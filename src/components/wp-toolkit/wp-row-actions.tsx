@@ -6,12 +6,18 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import {
-  LogIn, RefreshCw, KeyRound, Trash2, MoreHorizontal, X, FolderTree,
+  LogIn, RefreshCw, KeyRound, Trash2, MoreHorizontal, X, FolderTree, Lock, Loader2,
 } from "lucide-react"
 import { safeJson } from "@/lib/utils"
 
 interface Props {
-  site: { id: string; adminUser: string; category: { id: string } | null; website: { domain: string } }
+  site: {
+    id: string
+    adminUser: string
+    adminEmail: string
+    category: { id: string } | null
+    website: { domain: string; ssl: boolean }
+  }
   categories: { id: string; name: string }[]
   onAutoLogin: () => void
   onUpdateCore: () => void
@@ -27,6 +33,7 @@ export function WpRowActions({
   const [menuOpen, setMenuOpen] = useState(false)
   const [pwdOpen, setPwdOpen] = useState(false)
   const [catOpen, setCatOpen] = useState(false)
+  const [sslIssuing, setSslIssuing] = useState(false)
   const [newPassword, setNewPassword] = useState("")
   const [selectedCat, setSelectedCat] = useState(site.category?.id ?? "")
 
@@ -56,6 +63,36 @@ export function WpRowActions({
     }
     toast({ title: "Contraseña actualizada" })
     setPwdOpen(false); setNewPassword("")
+  }
+
+  const issueSsl = async () => {
+    close()
+    if (!confirm(
+      `Emitir certificado SSL para ${site.website.domain}?\n\n` +
+      `Requisitos:\n` +
+      `• El dominio DEBE resolver a la IP de este servidor.\n` +
+      `• El puerto 80 debe estar accesible desde internet.\n\n` +
+      `El proceso puede tardar 1-2 minutos.`
+    )) return
+
+    setSslIssuing(true)
+    toast({ title: "Emitiendo certificado…", description: "Esto puede tardar 1-2 min" })
+    try {
+      const res = await fetch(`/api/wp/sites/${site.id}/ssl`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: site.adminEmail }),
+      })
+      const d = await safeJson(res)
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Falló la emisión", description: d.error || "Error" })
+        return
+      }
+      toast({ title: "SSL emitido", description: `${site.website.domain} ahora con HTTPS` })
+      onChanged()
+    } finally {
+      setSslIssuing(false)
+    }
   }
 
   const submitCategory = async () => {
@@ -108,6 +145,18 @@ export function WpRowActions({
             <button onClick={() => { setCatOpen(true); close() }} className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center gap-2">
               <FolderTree className="w-3.5 h-3.5" /> Cambiar categoría
             </button>
+            {!site.website.ssl && (
+              <button
+                onClick={issueSsl}
+                disabled={sslIssuing}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center gap-2 disabled:opacity-50"
+              >
+                {sslIssuing
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Lock className="w-3.5 h-3.5" />}
+                Emitir SSL (Let&apos;s Encrypt)
+              </button>
+            )}
             <div className="h-px bg-border my-1" />
             <button onClick={() => { onDelete(); close() }} className="w-full text-left px-3 py-2 text-xs hover:bg-destructive/10 text-destructive flex items-center gap-2">
               <Trash2 className="w-3.5 h-3.5" /> Eliminar sitio
