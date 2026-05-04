@@ -51,7 +51,10 @@ export async function middleware(req: NextRequest) {
   const isApi = pathname.startsWith("/api")
   const isHtml = !isApi
 
-  // Rutas públicas que no necesitan sesión
+  // Rutas públicas que no necesitan sesión.
+  // Boundary check: pathname debe ser exactamente la ruta o seguirla con `/`,
+  // para que `/setupx` o `/login-fake` no se traten como públicas si Next algún
+  // día rutea esos paths.
   const publicRoutes = [
     "/_next",
     "/favicon",
@@ -61,7 +64,9 @@ export async function middleware(req: NextRequest) {
     "/api/setup", // Setup endpoints
   ]
 
-  const isPublic = publicRoutes.some((route) => pathname.startsWith(route))
+  const isPublic = publicRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  )
   if (isPublic) return nextWithCsp(req, isHtml)
 
   // Todas las otras rutas necesitan sesión con rol ADMIN

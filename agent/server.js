@@ -265,12 +265,13 @@ async function handleMailProvision(req, res) {
           const keyDir = `${DKIM_BASE}/${domain}`
           fs.mkdirSync(keyDir, { recursive: true })
           try {
-            await execAsync(`opendkim-genkey -D ${keyDir} -s mail -d ${domain}`)
+            await execFileAsync("opendkim-genkey", ["-D", keyDir, "-s", "mail", "-d", domain])
             const publicKey = fs.readFileSync(`${keyDir}/mail.txt`, "utf8")
             res.end(JSON.stringify({ ok: true, public_key: publicKey }))
           } catch (e) {
+            console.error("[mail/gen-dkim]", e)
             res.writeHead(500)
-            res.end(JSON.stringify({ error: `opendkim-genkey falló: ${e.message}` }))
+            res.end(JSON.stringify({ error: "dkim_genkey_failed" }))
           }
           break
         }
@@ -380,11 +381,14 @@ async function handleDnsProvision(req, res) {
             res.writeHead(400); res.end(JSON.stringify({ error: "Dominio inválido" })); return
           }
           try {
-            const { stdout } = await execAsync(`named-checkzone ${domain} ${BIND_ZONES_DIR}/db.${domain}`)
+            const { stdout } = await execFileAsync("named-checkzone", [domain, `${BIND_ZONES_DIR}/db.${domain}`])
             res.end(JSON.stringify({ ok: true, output: stdout.trim() }))
           } catch (e) {
-            res.writeHead(200) // devolvemos 200 con ok:false para que la UI lo muestre
-            res.end(JSON.stringify({ ok: false, error: (e.stderr || e.message || "").trim() }))
+            // named-checkzone usa exit code != 0 para zonas con errores y emite
+            // diagnóstico legible por stderr — ese output es para la UI, no es
+            // un internal_error. Domain ya pasó validateDomain.
+            res.writeHead(200)
+            res.end(JSON.stringify({ ok: false, error: (e.stderr || "zone check failed").trim() }))
           }
           break
         }
