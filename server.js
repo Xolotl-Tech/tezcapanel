@@ -11,8 +11,31 @@
  */
 const http = require("http")
 const net = require("net")
+const fs = require("fs")
+const path = require("path")
+const { execSync } = require("child_process")
 const { parse } = require("url")
 const next = require("next")
+
+// Versión instalada del panel: SHA del commit. Se inyecta en process.env
+// para que las API routes la lean sin tocar disco. Falla silenciosamente
+// si no hay git (instalaciones desde tarball o symlink raro).
+function detectInstalledSha() {
+  try {
+    const sha = execSync("git rev-parse HEAD", {
+      cwd: __dirname,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim()
+    if (/^[0-9a-f]{40}$/.test(sha)) return sha
+  } catch {}
+  // Fallback: VERSION file que install.sh puede escribir tras git pull.
+  try {
+    const v = fs.readFileSync(path.join(__dirname, "VERSION"), "utf8").trim()
+    if (/^[0-9a-f]{40}$/.test(v)) return v
+  } catch {}
+  return ""
+}
+process.env.PANEL_COMMIT = detectInstalledSha()
 
 const dev = process.env.NODE_ENV !== "production"
 const hostname = process.env.HOSTNAME || "0.0.0.0"

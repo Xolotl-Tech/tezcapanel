@@ -1,5 +1,6 @@
 "use client"
 import { NotificationsPanel } from "@/components/layout/notifications-panel"
+import { UpdateBanner } from "@/components/system/update-banner"
 import { signOut } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -29,6 +30,7 @@ export function Topbar({ user }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-2">
+       <UpdateBanner />
        <NotificationsPanel />
 
         <DropdownMenu>

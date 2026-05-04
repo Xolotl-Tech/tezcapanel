@@ -335,3 +335,12 @@ model SshCommand {
   command   String
   createdAt DateTime @default(now())
 }
+
+model SystemMeta {
+  id              String    @id @default("singleton")
+  installedSha    String?
+  latestSha       String?
+  latestCheckedAt DateTime?
+  changelog       String?   // JSON: [{sha, message, date, author}]
+  updatedAt       DateTime  @updatedAt
+}
