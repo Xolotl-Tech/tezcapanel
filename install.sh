@@ -228,13 +228,22 @@ case "$1" in
   update)
     cd $APP_DIR
     git fetch origin
+    PREV_SHA=$(git rev-parse HEAD)
     git reset --hard origin/main
+    NEW_SHA=$(git rev-parse HEAD)
     npm install
     npm rebuild node-pty
     npm run build
     npx prisma migrate deploy
     systemctl restart tezcapanel tezcaagent
-    echo "✔ Tezcapanel actualizado"
+    echo ""
+    echo "✔ Tezcapanel actualizado: ${PREV_SHA:0:7} → ${NEW_SHA:0:7}"
+    if [ "$PREV_SHA" != "$NEW_SHA" ]; then
+      echo ""
+      echo "Cambios incluidos:"
+      git log --pretty=format:"  %h  %s" $PREV_SHA..$NEW_SHA | head -20
+      echo ""
+    fi
     ;;
   reset-password)
     echo ""
