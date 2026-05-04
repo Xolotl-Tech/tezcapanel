@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { wpAgent } from "@/lib/wp-agent"
+import { webAgent } from "@/lib/web-agent"
 import { friendlyError } from "@/lib/agent-errors"
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -64,6 +65,10 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (!r.ok) {
     return NextResponse.json({ error: friendlyError(r.error) }, { status: 500 })
   }
+
+  // Borrar vhost de Nginx. Best-effort: si falla, lo logueamos pero no
+  // bloqueamos el delete del sitio (ya está sin archivos en disco).
+  await webAgent.deleteVhost(site.website.domain)
 
   await prisma.wpSite.delete({ where: { id } })
   await prisma.website.delete({ where: { id: site.websiteId } }).catch(() => {})

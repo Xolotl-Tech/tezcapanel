@@ -1172,6 +1172,155 @@ function handleHardening(req, res) {
   })
 }
 
+// --- Web (Nginx vhost provisioning) ---
+const NGINX_AVAILABLE = "/etc/nginx/sites-available"
+const NGINX_ENABLED   = "/etc/nginx/sites-enabled"
+const NGINX_LOG_DIR   = "/var/log/nginx"
+
+// Detecta socket PHP-FPM disponible. Devuelve null si no hay ninguno (caller
+// decide si rinde error o continúa sin PHP).
+function detectPhpFpmSocket() {
+  const dir = "/run/php"
+  try {
+    const files = fs.readdirSync(dir)
+    const sockets = files
+      .filter((f) => /^php([\d.]*)?-?fpm\.sock$/.test(f))
+      .sort() // último alfabéticamente = mayor versión
+      .reverse()
+    return sockets.length ? `${dir}/${sockets[0]}` : null
+  } catch { return null }
+}
+
+function renderVhost({ domain, rootPath, kind, phpFpmSocket }) {
+  const wwwAlt = `www.${domain}`
+  const access = `${NGINX_LOG_DIR}/${domain}.access.log`
+  const errlog = `${NGINX_LOG_DIR}/${domain}.error.log`
+
+  const phpBlock = phpFpmSocket ? `
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:${phpFpmSocket};
+    }
+` : ""
+
+  const tryFiles = kind === "wp"
+    ? "try_files $uri $uri/ /index.php?$args;"
+    : "try_files $uri $uri/ =404;"
+
+  return `# Generado por tezcapanel — ${new Date().toISOString()}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain} ${wwwAlt};
+
+    root ${rootPath};
+    index index.php index.html index.htm;
+
+    access_log ${access};
+    error_log ${errlog};
+
+    location / {
+        ${tryFiles}
+    }
+${phpBlock}
+    location ~ /\\.ht { deny all; }
+
+    location = /favicon.ico { log_not_found off; access_log off; }
+    location = /robots.txt  { log_not_found off; access_log off; allow all; }
+    location ~* \\.(css|gif|ico|jpeg|jpg|js|png|svg|webp|woff2?)$ {
+        expires max;
+        log_not_found off;
+    }
+}
+`
+}
+
+function handleWebProvision(req, res) {
+  let body = ""
+  req.on("data", (c) => { body += c })
+  req.on("end", async () => {
+    try {
+      const data = JSON.parse(body || "{}")
+      const { action } = data
+
+      switch (action) {
+        case "create-vhost": {
+          const { domain, rootPath, kind = "wp", phpFpmSocket } = data
+
+          if (!validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "domain inválido" })); return
+          }
+          if (!isSafeAbsPath(rootPath)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "rootPath inválido" })); return
+          }
+          if (!["wp", "static"].includes(kind)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "kind inválido" })); return
+          }
+          let socket = phpFpmSocket || null
+          if (socket && !isSafeAbsPath(socket, "/run/")) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "phpFpmSocket inválido" })); return
+          }
+          if (kind === "wp" && !socket) {
+            socket = detectPhpFpmSocket()
+            if (!socket) {
+              res.writeHead(412)
+              res.end(JSON.stringify({ ok: false, error: "php_fpm_not_found" }))
+              return
+            }
+          }
+
+          const confPath  = `${NGINX_AVAILABLE}/${domain}`
+          const enabledLn = `${NGINX_ENABLED}/${domain}`
+
+          try {
+            fs.mkdirSync(NGINX_AVAILABLE, { recursive: true })
+            fs.mkdirSync(NGINX_ENABLED,   { recursive: true })
+            fs.writeFileSync(confPath, renderVhost({ domain, rootPath, kind, phpFpmSocket: socket }), "utf8")
+            // symlink idempotente
+            try { fs.unlinkSync(enabledLn) } catch {}
+            fs.symlinkSync(confPath, enabledLn)
+            // validar antes de recargar — si falla, no hacemos reload
+            await execFileAsync("nginx", ["-t"])
+            await execFileAsync("nginx", ["-s", "reload"])
+            res.end(JSON.stringify({ ok: true, confPath }))
+          } catch (e) {
+            console.error("[web/create-vhost]", e)
+            res.writeHead(500)
+            res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
+        case "delete-vhost": {
+          const { domain } = data
+          if (!validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "domain inválido" })); return
+          }
+          try {
+            try { fs.unlinkSync(`${NGINX_ENABLED}/${domain}`) } catch {}
+            try { fs.unlinkSync(`${NGINX_AVAILABLE}/${domain}`) } catch {}
+            await execFileAsync("nginx", ["-t"]).catch(() => {})
+            await execFileAsync("nginx", ["-s", "reload"]).catch(() => {})
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            console.error("[web/delete-vhost]", e)
+            res.writeHead(500); res.end(JSON.stringify({ ok: false, error: "internal_error" }))
+          }
+          break
+        }
+
+        default:
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
+      }
+    } catch (err) {
+      console.error("[web/provision]", err)
+      res.writeHead(500)
+      res.end(JSON.stringify({ error: "internal_error" }))
+    }
+  })
+}
+
 // --- Anti Intrusion ---
 const CRITICAL_FILES = [
   "/etc/passwd", "/etc/shadow", "/etc/group", "/etc/sudoers",
@@ -2300,6 +2449,8 @@ const server = http.createServer(async (req, res) => {
       handleHardening(req, res)
     } else if (method === "POST" && url === "/wp/action") {
       handleWp(req, res)
+    } else if (method === "POST" && url === "/web/provision") {
+      handleWebProvision(req, res)
     } else {
       res.writeHead(404)
       res.end(JSON.stringify({ error: "not found" }))

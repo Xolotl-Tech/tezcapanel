@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth"
 import { NextRequest, NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { wpAgent } from "@/lib/wp-agent"
+import { webAgent } from "@/lib/web-agent"
 import { friendlyError } from "@/lib/agent-errors"
 import { randomBytes } from "crypto"
 
@@ -108,6 +109,18 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 
+  // Provisionar vhost de Nginx para que el sitio sea servible. Si falla, el
+  // sitio queda instalado en disco/DB pero no servido — devolvemos warning
+  // en la respuesta para que la UI lo muestre, sin bloquear la creación.
+  const vhost = await webAgent.createVhost({
+    domain,
+    rootPath,
+    kind: "wp",
+  })
+  if (!vhost.ok) {
+    console.error("[wp install vhost fail]", vhost)
+  }
+
   const wpSite = await prisma.wpSite.create({
     data: {
       websiteId: website.id,
@@ -133,7 +146,12 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json({ site: wpSite })
+  return NextResponse.json({
+    site: wpSite,
+    vhost: vhost.ok
+      ? { ok: true }
+      : { ok: false, warning: friendlyError(vhost.error) },
+  })
   } catch (err) {
     // Detalles completos sólo en server-side log; nunca al cliente.
     console.error("[api/wp/sites POST] uncaught", err)
