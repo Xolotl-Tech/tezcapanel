@@ -5,6 +5,7 @@ interface AgentResult {
   ok: boolean
   error?: string
   confPath?: string
+  output?: string
 }
 
 async function call(body: Record<string, unknown>, timeoutMs = 30000): Promise<AgentResult> {
@@ -38,4 +39,10 @@ export const webAgent = {
     }),
 
   deleteVhost: (domain: string) => call({ action: "delete-vhost", domain }),
+
+  provisionSsl: (params: { domain: string; email: string; includeWww?: boolean }) =>
+    // certbot puede tardar — descarga, valida HTTP-01, instala. Timeout 5min.
+    call({ action: "provision-ssl", ...params }, 305000),
+
+  renewSsl: () => call({ action: "renew-ssl" }, 305000),
 }

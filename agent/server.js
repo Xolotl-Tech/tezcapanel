@@ -1309,6 +1309,56 @@ function handleWebProvision(req, res) {
           break
         }
 
+        case "provision-ssl": {
+          // Emite cert Let's Encrypt para domain + www.domain via certbot --nginx.
+          // Pre-requisito: el dominio debe resolver A/AAAA a este server y
+          // el vhost HTTP debe estar activo (lo creamos en create-vhost).
+          // certbot reescribe el vhost para usar 443 + redirect 80→443.
+          const { domain, email, includeWww = true } = data
+          if (!validateDomain(domain)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "domain inválido" })); return
+          }
+          if (!isSafeEmail(email)) {
+            res.writeHead(400); res.end(JSON.stringify({ error: "email inválido" })); return
+          }
+          try {
+            const args = [
+              "--nginx",
+              "-d", domain,
+              ...(includeWww ? ["-d", `www.${domain}`] : []),
+              "--non-interactive",
+              "--agree-tos",
+              "-m", email,
+              "--redirect",
+              "--keep-until-expiring",
+            ]
+            const { stdout } = await execFileAsync("certbot", args, { timeout: 300000 })
+            res.end(JSON.stringify({ ok: true, output: stdout.trim().slice(-500) }))
+          } catch (e) {
+            console.error("[web/provision-ssl]", e)
+            res.writeHead(500)
+            res.end(JSON.stringify({
+              ok: false,
+              error: friendlyAgentError(e.stderr || e.message),
+            }))
+          }
+          break
+        }
+
+        case "renew-ssl": {
+          // Usado por cron para renovar certificados próximos a expirar.
+          // Idempotente: si nada está cerca de expirar, no hace nada.
+          try {
+            const { stdout } = await execFileAsync("certbot", ["renew", "--quiet"], { timeout: 300000 })
+            res.end(JSON.stringify({ ok: true, output: stdout.trim() }))
+          } catch (e) {
+            console.error("[web/renew-ssl]", e)
+            res.writeHead(500)
+            res.end(JSON.stringify({ ok: false, error: friendlyAgentError(e.stderr || e.message) }))
+          }
+          break
+        }
+
         default:
           res.writeHead(400)
           res.end(JSON.stringify({ error: `Acción desconocida: ${action}` }))
