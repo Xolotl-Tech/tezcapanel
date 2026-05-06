@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
-import { Sparkles, X, ArrowUpCircle, CheckCircle2, Loader2 } from "lucide-react"
+import { Sparkles, X, ArrowUpCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react"
 
 interface ReleaseCategory {
   label: string
@@ -40,14 +40,35 @@ interface UpdateStatusResponse {
 export function UpdateBanner() {
   const [info, setInfo] = useState<VersionResponse | null>(null)
   const [open, setOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const fetchInfo = async (force = false) => {
+    if (force) setRefreshing(true)
+    try {
+      const r = await fetch(
+        "/api/system/version" + (force ? "?force=1" : ""),
+        { cache: "no-store" }
+      )
+      if (r.ok) setInfo(await r.json())
+    } catch {
+      // silencioso: el badge mantiene el último estado conocido
+    } finally {
+      if (force) setRefreshing(false)
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false
-    fetch("/api/system/version", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled) setInfo(d) })
-      .catch(() => {})
-    return () => { cancelled = true }
+    fetchInfo()
+    // Refetch cuando el usuario regresa a la pestaña — captura releases
+    // publicados mientras estaba afuera sin polling continuo.
+    const onFocus = () => { if (!document.hidden) fetchInfo() }
+    document.addEventListener("visibilitychange", onFocus)
+    window.addEventListener("focus", onFocus)
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus)
+      window.removeEventListener("focus", onFocus)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loading = info === null
@@ -93,13 +114,28 @@ export function UpdateBanner() {
       </button>
 
       {open && info && (
-        <UpdateModal info={info} onClose={() => setOpen(false)} />
+        <UpdateModal
+          info={info}
+          refreshing={refreshing}
+          onRefresh={() => fetchInfo(true)}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   )
 }
 
-function UpdateModal({ info, onClose }: { info: VersionResponse; onClose: () => void }) {
+function UpdateModal({
+  info,
+  refreshing,
+  onRefresh,
+  onClose,
+}: {
+  info: VersionResponse
+  refreshing: boolean
+  onRefresh: () => void
+  onClose: () => void
+}) {
   const updateAvailable = info.updateAvailable
   const release = info.release
   const { toast } = useToast()
@@ -307,7 +343,18 @@ function UpdateModal({ info, onClose }: { info: VersionResponse; onClose: () => 
             </>
           )}
           {phase === "review" && !updateAvailable && (
-            <Button size="sm" variant="outline" onClick={onClose}>Cerrar</Button>
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onRefresh}
+                disabled={refreshing}
+              >
+                <RefreshCw className={`w-3 h-3 mr-2 ${refreshing ? "animate-spin" : ""}`} />
+                {refreshing ? "Verificando…" : "Re-verificar"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={onClose}>Cerrar</Button>
+            </>
           )}
           {phase === "running" && (
             <Button size="sm" disabled>

@@ -4,8 +4,10 @@ import { prisma } from "@/lib/prisma"
 import pkg from "../../../../../package.json"
 
 const REPO = process.env.PANEL_REPO || "Xolotl-Tech/tezcapanel"
-// Caché de 6h para no quemar el rate limit anónimo de GitHub (60 req/h).
-const CHECK_INTERVAL_MS = 6 * 60 * 60_000
+// 10 minutos. GitHub rate-limit anónimo es 60 req/h por IP, así que aún
+// con varias visitas concurrentes no nos acercamos. El navegador puede
+// pasar `?force=1` para saltarse la caché (botón "Re-verificar").
+const CHECK_INTERVAL_MS = 10 * 60_000
 
 const AUTHOR_NAME = "Xolotl Tech"
 const AUTHOR_URL = "https://github.com/Xolotl-Tech"
@@ -112,7 +114,7 @@ async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
   }
 }
 
-export async function GET(): Promise<NextResponse<VersionResponse>> {
+export async function GET(req: Request): Promise<NextResponse<VersionResponse>> {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({
@@ -142,7 +144,8 @@ export async function GET(): Promise<NextResponse<VersionResponse>> {
   })()
   const cacheCorrupt = (meta?.latestSha && !isSemver(meta.latestSha)) ||
                        (meta?.changelog && !cachedRelease)
-  const stale = cacheCorrupt || now - lastChecked > CHECK_INTERVAL_MS
+  const force = new URL(req.url).searchParams.get("force") === "1"
+  const stale = force || cacheCorrupt || now - lastChecked > CHECK_INTERVAL_MS
 
   let latest = isSemver(meta?.latestSha) ? meta!.latestSha! : null
   let release: ReleaseInfo | null = cachedRelease
