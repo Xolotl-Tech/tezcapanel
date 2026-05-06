@@ -167,7 +167,9 @@ After=network.target tezcaagent.service
 Type=simple
 User=root
 WorkingDirectory=$APP_DIR
-ExecStart=$(which node) node_modules/.bin/next start -p $PANEL_PORT
+ExecStart=$(which node) server.js
+Environment=PORT=$PANEL_PORT
+Environment=HOSTNAME=0.0.0.0
 Restart=always
 RestartSec=5
 EnvironmentFile=$APP_DIR/.env

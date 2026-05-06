@@ -36,16 +36,21 @@ function buildCsp(nonce: string, isDev: boolean): string {
 function nextWithCsp(req: NextRequest, isHtml: boolean): NextResponse {
   const nonce = isHtml ? generateNonce() : ""
   const requestHeaders = new Headers(req.headers)
-  if (nonce) requestHeaders.set("x-nonce", nonce)
-  const res = NextResponse.next({ request: { headers: requestHeaders } })
   if (isHtml) {
     const isDev = process.env.NODE_ENV !== "production"
-    res.headers.set("Content-Security-Policy", buildCsp(nonce, isDev))
-    // El nonce viaja sólo en el request header (para que server components lo
-    // lean vía headers()) y dentro de los <script nonce="..."> renderizados.
-    // No tiene sentido echolo en el response header — el navegador no lo usa.
+    const csp = buildCsp(nonce, isDev)
+    // Both must be set on the REQUEST headers: `x-nonce` so server components
+    // can read it via headers(), and `Content-Security-Policy` so Next's
+    // renderer auto-injects nonce="..." into the <script> tags it emits.
+    // Without the CSP request header, Next emits chunks without nonce and
+    // strict-dynamic blocks them — page never hydrates.
+    requestHeaders.set("x-nonce", nonce)
+    requestHeaders.set("Content-Security-Policy", csp)
+    const res = NextResponse.next({ request: { headers: requestHeaders } })
+    res.headers.set("Content-Security-Policy", csp)
+    return res
   }
-  return res
+  return NextResponse.next({ request: { headers: requestHeaders } })
 }
 
 export async function middleware(req: NextRequest) {
