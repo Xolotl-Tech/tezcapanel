@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/layout/sidebar"
 import { Topbar } from "@/components/layout/topbar"
 import { MetricsProvider } from "@/components/dashboard/metrics-provider"
 import { ConfirmProvider } from "@/components/ui/confirm-dialog"
+import { FloatingByte } from "@/components/ai/floating-byte"
 
 export default async function DashboardLayout({
   children,
@@ -26,6 +27,7 @@ export default async function DashboardLayout({
           </MetricsProvider>
         </main>
       </div>
+      <FloatingByte />
     </div>
   )
 }
