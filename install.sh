@@ -233,11 +233,12 @@ case "$1" in
     PREV_SHA=$(git rev-parse HEAD)
     git reset --hard origin/main
     NEW_SHA=$(git rev-parse HEAD)
-    npm install
-    npm rebuild node-pty
-    npm run build
-    npx prisma migrate deploy
-    systemctl restart tezcapanel tezcaagent
+    # Re-correr install.sh es idempotente: dnf detecta paquetes ya instalados,
+    # npm hace nada si las deps no cambiaron, y los `cat > /etc/systemd/...`
+    # sobreescriben las units si cambió ExecStart, y el `cat > /usr/local/bin/
+    # tezcapanel` reescribe el CLI con los subcomandos nuevos. Sin esto, los
+    # cambios al CLI o al systemd unit no llegaban a las VMs en updates.
+    bash $APP_DIR/install.sh
     echo ""
     echo "✔ Tezcapanel actualizado: ${PREV_SHA:0:7} → ${NEW_SHA:0:7}"
     if [ "$PREV_SHA" != "$NEW_SHA" ]; then
