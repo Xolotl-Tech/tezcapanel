@@ -2,12 +2,13 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { signOut } from "next-auth/react"
 import { navItems } from "./nav-items"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import {
   LayoutDashboard, Globe, Database, Mail, Server,
-  Shield, Archive, Terminal, Users, Settings, ChevronRight, Bot, Briefcase,
+  Shield, Archive, Terminal, Users, Settings, ChevronRight, Bot, Briefcase, LogOut,
 } from "lucide-react"
 
 const iconMap: Record<string, React.ElementType> = {
@@ -73,12 +74,16 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Footer */}
+      {/* Footer: cerrar sesión */}
       <div className="p-3 border-t border-border">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-secondary/50">
-          <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-          <span className="text-xs text-muted-foreground">Servidor activo</span>
-        </div>
+        <button
+          type="button"
+          onClick={() => signOut({ callbackUrl: "/login" })}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+        >
+          <LogOut className="w-4 h-4 shrink-0" />
+          <span>Cerrar sesión</span>
+        </button>
       </div>
     </aside>
   )

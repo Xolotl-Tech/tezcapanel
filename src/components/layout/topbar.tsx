@@ -1,18 +1,14 @@
 "use client"
 import { NotificationsPanel } from "@/components/layout/notifications-panel"
 import { UpdateBanner } from "@/components/system/update-banner"
-import { signOut } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { LogOut } from "lucide-react"
 
 interface TopbarProps {
   user?: { name?: string | null; email?: string | null }
@@ -50,14 +46,6 @@ export function Topbar({ user }: TopbarProps) {
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
             </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => signOut({ callbackUrl: "/login" })}
-            >
-              <LogOut className="mr-2 h-4 w-4" />
-              Cerrar sesión
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

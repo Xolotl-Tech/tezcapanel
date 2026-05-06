@@ -3,7 +3,7 @@
 import { useServerStore } from "@/store/server.store"
 import { MetricCard } from "@/components/dashboard/metric-card"
 import { ServicesStatus } from "@/components/dashboard/services-status-live"
-import { formatBytes, formatUptime } from "@/lib/utils"
+import { cn, formatBytes, formatUptime } from "@/lib/utils"
 import { Cpu, HardDrive, Clock, MemoryStick } from "lucide-react"
 
 export default function DashboardPage() {
@@ -22,15 +22,35 @@ export default function DashboardPage() {
     ? `de ${formatBytes(metrics.disk.total)} total`
     : ""
 
+  const serverOnline = metrics != null && error !== "agent_unavailable"
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">
-          {metrics?.hostname ?? "Panel de control"}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {metrics?.os ?? "Conectando con el servidor..."}
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-semibold">
+            {metrics?.hostname ?? "Panel de control"}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {metrics?.os ?? "Conectando con el servidor..."}
+          </p>
+        </div>
+        <div
+          className={cn(
+            "flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium border",
+            serverOnline
+              ? "bg-primary/10 border-primary/30 text-primary"
+              : "bg-destructive/10 border-destructive/30 text-destructive"
+          )}
+        >
+          <span
+            className={cn(
+              "w-1.5 h-1.5 rounded-full",
+              serverOnline ? "bg-primary animate-pulse" : "bg-destructive"
+            )}
+          />
+          {serverOnline ? "Servidor activo" : "Servidor desconectado"}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
