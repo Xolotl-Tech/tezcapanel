@@ -2322,6 +2322,279 @@ function setHeaders(res) {
   // en cross-origin y queda bloqueado, que es lo deseado.
 }
 
+// Detección determinística del estado del servidor: SO, package manager,
+// componentes de stack instalados y recomendación inicial. La usa Byte para
+// el wizard de onboarding (LAMP/LEMP). No instala nada — sólo lee. Si un
+// binario no existe execFile lanza ENOENT, lo capturamos y reportamos
+// `installed: false`. Versión se extrae con regex simple del primer match
+// numérico de la salida; suficiente para mostrar "PHP 8.2" sin parsing
+// complejo.
+async function detectBinary(name, args = ["--version"]) {
+  try {
+    const { stdout, stderr } = await execFileAsync(name, args, { timeout: 4000 })
+    const out = (stdout || stderr || "").trim()
+    const ver = out.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null
+    return { installed: true, version: ver, raw: out.split("\n")[0] ?? "" }
+  } catch {
+    return { installed: false, version: null, raw: "" }
+  }
+}
+
+async function detectService(unit) {
+  try {
+    const { stdout } = await execFileAsync("systemctl", ["is-active", unit], { timeout: 3000 })
+    return stdout.trim() === "active"
+  } catch {
+    return false
+  }
+}
+
+// Lock global: prohibe dos instalaciones de stack simultáneas. Es proceso
+// único por agente y la operación toma minutos, así que un Set con el unit
+// activo es suficiente — no necesitamos persistencia ni systemd-run aquí
+// porque el agente no se reinicia durante una instalación de paquetes
+// (al revés del panel, que sí lo hace en update).
+let installInProgress = false
+
+function buildInstallSteps(stack, family) {
+  const steps = []
+  if (family === "rhel") {
+    steps.push({ label: "Actualizando índice de paquetes", cmd: "dnf", args: ["-y", "makecache"] })
+    if (stack === "lemp") {
+      steps.push({
+        label: "Instalando nginx + MariaDB + PHP",
+        cmd: "dnf",
+        args: ["-y", "install", "nginx", "mariadb-server", "php", "php-fpm",
+               "php-mysqlnd", "php-cli", "php-common", "php-json", "certbot",
+               "python3-certbot-nginx"],
+      })
+      steps.push({ label: "Habilitando servicios", cmd: "systemctl",
+                   args: ["enable", "--now", "nginx", "mariadb", "php-fpm"] })
+    } else {
+      steps.push({
+        label: "Instalando Apache + MariaDB + PHP",
+        cmd: "dnf",
+        args: ["-y", "install", "httpd", "mariadb-server", "php", "php-mysqlnd",
+               "php-cli", "php-common", "mod_ssl", "certbot",
+               "python3-certbot-apache"],
+      })
+      steps.push({ label: "Habilitando servicios", cmd: "systemctl",
+                   args: ["enable", "--now", "httpd", "mariadb"] })
+    }
+  } else if (family === "debian") {
+    steps.push({ label: "Actualizando índice de paquetes", cmd: "apt-get", args: ["update"] })
+    if (stack === "lemp") {
+      steps.push({
+        label: "Instalando nginx + MariaDB + PHP",
+        cmd: "apt-get",
+        args: ["-y", "install", "nginx", "mariadb-server", "php-fpm",
+               "php-mysql", "php-cli", "php-common", "certbot",
+               "python3-certbot-nginx"],
+      })
+      // En Debian/Ubuntu el unit de PHP-FPM lleva el número de versión
+      // (php8.2-fpm, php8.3-fpm). Resolvemos en runtime con bash en lugar
+      // de hardcodear la versión, que cambia por release.
+      steps.push({
+        label: "Habilitando servicios",
+        cmd: "bash",
+        args: ["-c", "systemctl enable --now nginx mariadb && " +
+                    "systemctl enable --now $(systemctl list-unit-files 'php*-fpm.service' --no-legend --no-pager | awk '{print $1}' | head -n1)"],
+      })
+    } else {
+      steps.push({
+        label: "Instalando Apache + MariaDB + PHP",
+        cmd: "apt-get",
+        args: ["-y", "install", "apache2", "mariadb-server", "php",
+               "libapache2-mod-php", "php-mysql", "php-cli", "certbot",
+               "python3-certbot-apache"],
+      })
+      steps.push({ label: "Habilitando servicios", cmd: "systemctl",
+                   args: ["enable", "--now", "apache2", "mariadb"] })
+    }
+  }
+  return steps
+}
+
+async function handleInstallStack(req, res) {
+  let body = ""
+  for await (const chunk of req) body += chunk
+  let parsed
+  try { parsed = JSON.parse(body) } catch {
+    res.writeHead(400); res.end(JSON.stringify({ error: "json_invalid" })); return
+  }
+  const stack = parsed.stack
+  if (stack !== "lamp" && stack !== "lemp") {
+    res.writeHead(400); res.end(JSON.stringify({ error: "invalid_stack" })); return
+  }
+  if (installInProgress) {
+    res.writeHead(409); res.end(JSON.stringify({ error: "install_in_progress" })); return
+  }
+
+  const osInfo = await si.osInfo()
+  const id = (osInfo.distro || osInfo.platform || "").toLowerCase()
+  const family = /(rocky|alma|centos|rhel|fedora|red ?hat)/.test(id) ? "rhel" :
+                 /(ubuntu|debian|mint)/.test(id)                      ? "debian" : "unknown"
+
+  if (family === "unknown") {
+    res.writeHead(400); res.end(JSON.stringify({ error: "unsupported_os" })); return
+  }
+
+  const steps = buildInstallSteps(stack, family)
+
+  installInProgress = true
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  })
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+
+  // Heartbeat cada 15s para evitar que proxies/timeouts cierren la conexión
+  // mientras dnf/apt están bajando paquetes sin output por minutos.
+  const heartbeat = setInterval(() => res.write(`: ping\n\n`), 15000)
+
+  const cleanup = () => { clearInterval(heartbeat); installInProgress = false }
+  req.on("close", cleanup)
+
+  try {
+    send("start", { stack, family, totalSteps: steps.length })
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]
+      send("step", { index: i, label: step.label, cmd: `${step.cmd} ${step.args.join(" ")}` })
+
+      const env = { ...process.env, DEBIAN_FRONTEND: "noninteractive", LC_ALL: "C" }
+      const child = require("child_process").spawn(step.cmd, step.args, { env })
+
+      child.stdout.on("data", (b) => {
+        for (const line of b.toString().split("\n")) {
+          if (line) send("stdout", { line })
+        }
+      })
+      child.stderr.on("data", (b) => {
+        for (const line of b.toString().split("\n")) {
+          if (line) send("stderr", { line })
+        }
+      })
+
+      const code = await new Promise((resolve) => child.on("exit", (c) => resolve(c ?? 1)))
+      if (code !== 0) {
+        send("error", { index: i, label: step.label, code })
+        send("done", { ok: false, failedStep: i })
+        res.end(); cleanup(); return
+      }
+    }
+
+    send("done", { ok: true })
+    res.end()
+  } catch (err) {
+    send("error", { index: -1, label: "fatal", message: String(err?.message ?? err) })
+    send("done", { ok: false })
+    res.end()
+  } finally {
+    cleanup()
+  }
+}
+
+async function handleSystemScan(res) {
+  const [osInfo, mem, disk, cpuData] = await Promise.all([
+    si.osInfo(),
+    si.mem(),
+    si.fsSize(),
+    si.cpu(),
+  ])
+
+  const family = (() => {
+    const id = (osInfo.distro || osInfo.platform || "").toLowerCase()
+    if (/(rocky|alma|centos|rhel|fedora|red ?hat)/.test(id)) return "rhel"
+    if (/(ubuntu|debian|mint)/.test(id)) return "debian"
+    return "unknown"
+  })()
+
+  const pkgManager = await (async () => {
+    for (const pm of ["dnf", "apt-get", "yum"]) {
+      try {
+        await execFileAsync("which", [pm], { timeout: 2000 })
+        return pm === "apt-get" ? "apt" : pm
+      } catch {}
+    }
+    return null
+  })()
+
+  const [nginx, apache, mariadb, mysql, postgres, php, node, redis, certbot] = await Promise.all([
+    detectBinary("nginx", ["-v"]),
+    detectBinary(family === "rhel" ? "httpd" : "apache2", ["-v"]),
+    detectBinary("mariadb", ["--version"]),
+    detectBinary("mysql", ["--version"]),
+    detectBinary("psql", ["--version"]),
+    detectBinary("php", ["--version"]),
+    detectBinary("node", ["--version"]),
+    detectBinary("redis-server", ["--version"]),
+    detectBinary("certbot", ["--version"]),
+  ])
+
+  const [nginxActive, apacheActive, mariadbActive, mysqlActive, postgresActive] = await Promise.all([
+    detectService("nginx"),
+    detectService(family === "rhel" ? "httpd" : "apache2"),
+    detectService("mariadb"),
+    detectService("mysql"),
+    detectService("postgresql"),
+  ])
+
+  const webServer = nginx.installed ? "nginx" : (apache.installed ? "apache" : null)
+  const database = mariadb.installed ? "mariadb" : (mysql.installed ? "mysql" : (postgres.installed ? "postgres" : null))
+  const hasStack = !!(webServer && database && php.installed)
+
+  // Recomendación: si no hay stack, sugerimos según RAM/SO. LEMP por defecto
+  // (nginx pesa menos y rinde mejor en VPS chicos). LAMP sólo si el usuario
+  // ya tiene apache instalado o es Debian/Ubuntu con preferencia histórica.
+  const recommended = (() => {
+    if (hasStack) return null
+    if (apache.installed && !nginx.installed) return "lamp"
+    return "lemp"
+  })()
+
+  const rootDisk = disk.find((d) => d.mount === "/") ?? disk[0] ?? {}
+
+  res.end(JSON.stringify({
+    os: {
+      distro: osInfo.distro ?? null,
+      release: osInfo.release ?? null,
+      codename: osInfo.codename ?? null,
+      family,
+      arch: osInfo.arch ?? null,
+    },
+    hardware: {
+      cores: cpuData.cores ?? 1,
+      memTotal: mem.total ?? 0,
+      diskTotal: rootDisk.size ?? 0,
+      diskFree: (rootDisk.size ?? 0) - (rootDisk.used ?? 0),
+    },
+    pkgManager,
+    components: {
+      nginx:    { ...nginx,    active: nginxActive },
+      apache:   { ...apache,   active: apacheActive },
+      mariadb:  { ...mariadb,  active: mariadbActive },
+      mysql:    { ...mysql,    active: mysqlActive },
+      postgres: { ...postgres, active: postgresActive },
+      php,
+      node,
+      redis,
+      certbot,
+    },
+    summary: {
+      webServer,
+      database,
+      hasStack,
+      recommended, // "lamp" | "lemp" | null
+    },
+  }))
+}
+
 async function handleMetrics(res) {
   const [cpuData, cpuLoad, mem, disk, osInfo] = await Promise.all([
     si.cpu(),
@@ -2470,6 +2743,10 @@ const server = http.createServer(async (req, res) => {
       await handleMetrics(res)
     } else if (method === "GET" && url === "/services") {
       await handleServices(res)
+    } else if (method === "GET" && url === "/system/scan") {
+      await handleSystemScan(res)
+    } else if (method === "POST" && url === "/system/install-stack") {
+      await handleInstallStack(req, res)
     } else if (method === "POST" && url === "/execute") {
       await handleExecute(req, res)
     } else if (method === "POST" && url.startsWith("/services/") && url.endsWith("/restart")) {
