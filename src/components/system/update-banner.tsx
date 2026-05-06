@@ -59,9 +59,18 @@ export function UpdateBanner() {
 
   useEffect(() => {
     fetchInfo()
-    // Refetch cuando el usuario regresa a la pestaña — captura releases
-    // publicados mientras estaba afuera sin polling continuo.
-    const onFocus = () => { if (!document.hidden) fetchInfo() }
+    // Refetch al regresar foco a la pestaña. Throttle a 1 vez por minuto
+    // para que tab-switching no queme el rate limit anónimo de GitHub.
+    // Forzamos `force=1` porque el TTL server-side de la BD ignoraría un
+    // GET normal (devolvería caché vieja).
+    let lastForceMs = 0
+    const onFocus = () => {
+      if (document.hidden) return
+      const now = Date.now()
+      if (now - lastForceMs < 60_000) return
+      lastForceMs = now
+      fetchInfo(true)
+    }
     document.addEventListener("visibilitychange", onFocus)
     window.addEventListener("focus", onFocus)
     return () => {

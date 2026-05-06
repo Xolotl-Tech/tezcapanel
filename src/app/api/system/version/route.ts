@@ -4,10 +4,10 @@ import { prisma } from "@/lib/prisma"
 import pkg from "../../../../../package.json"
 
 const REPO = process.env.PANEL_REPO || "Xolotl-Tech/tezcapanel"
-// 10 minutos. GitHub rate-limit anónimo es 60 req/h por IP, así que aún
-// con varias visitas concurrentes no nos acercamos. El navegador puede
-// pasar `?force=1` para saltarse la caché (botón "Re-verificar").
-const CHECK_INTERVAL_MS = 10 * 60_000
+// 2 minutos. GitHub rate-limit anónimo es 60 req/h por IP, así que aún
+// con varios paneles activos en la misma red no nos acercamos. El cliente
+// también pasa `?force=1` en eventos puntuales (focus, botón manual).
+const CHECK_INTERVAL_MS = 2 * 60_000
 
 const AUTHOR_NAME = "Xolotl Tech"
 const AUTHOR_URL = "https://github.com/Xolotl-Tech"
