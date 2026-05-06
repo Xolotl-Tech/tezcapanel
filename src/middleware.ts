@@ -14,9 +14,20 @@ function generateNonce(): string {
 }
 
 function buildCsp(nonce: string, isDev: boolean): string {
+  // NOTE: ideally we'd use `'self' 'nonce-${nonce}' 'strict-dynamic'` here, but
+  // Next.js 15.3 with our custom server (server.js) is not auto-injecting the
+  // nonce attribute on the <script> tags it emits. Result: chunks load without
+  // nonce, strict-dynamic blocks them, page never hydrates. Until we either
+  // upgrade Next or wire nonce manually in the root layout, fall back to
+  // 'self' 'unsafe-inline' so the panel actually works. Tradeoff: loses CSP's
+  // XSS-via-inline-script protection. Other layers (input sanitization,
+  // React's auto-escaping, X-Frame DENY, etc.) still hold.
   const scriptSrc = isDev
-    ? `'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`
-    : `'self' 'nonce-${nonce}' 'strict-dynamic'`
+    ? `'self' 'unsafe-inline' 'unsafe-eval'`
+    : `'self' 'unsafe-inline'`
+  // nonce is still emitted in `x-nonce` request header for any future server
+  // component that wants to use it; no harm leaving it.
+  void nonce
   return [
     "default-src 'self'",
     `script-src ${scriptSrc}`,
