@@ -2634,17 +2634,21 @@ async function handleServices(res) {
   const processes = await si.processes()
   const running = new Set(processes.list.map((p) => p.name.toLowerCase()))
 
+  // Cada target acepta varios nombres de proceso: en RHEL/Rocky el binario
+  // de MariaDB es `mariadbd`, en Debian/Ubuntu históricamente `mysqld`.
+  // Apache es `httpd` en RHEL y `apache2` en Debian.
   const targets = [
-    { name: "nginx",   check: "nginx" },
-    { name: "mysql",   check: "mysqld" },
-    { name: "postfix", check: "postfix" },
-    { name: "dovecot", check: "dovecot" },
-    { name: "named",   check: "named" },
+    { name: "nginx",   checks: ["nginx"] },
+    { name: "apache",  checks: ["httpd", "apache2"] },
+    { name: "mysql",   checks: ["mariadbd", "mysqld"] },
+    { name: "postfix", checks: ["postfix", "master"] },
+    { name: "dovecot", checks: ["dovecot"] },
+    { name: "named",   checks: ["named"] },
   ]
 
-  const services = targets.map(({ name, check }) => ({
+  const services = targets.map(({ name, checks }) => ({
     name,
-    status: running.has(check) ? "running" : "stopped",
+    status: checks.some((c) => running.has(c)) ? "running" : "stopped",
   }))
 
   res.end(JSON.stringify(services))
