@@ -1,65 +1,112 @@
 import { auth } from "@/lib/auth"
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import pkg from "../../../../../package.json"
 
 const REPO = process.env.PANEL_REPO || "Xolotl-Tech/tezcapanel"
-const BRANCH = process.env.PANEL_BRANCH || "main"
-// Cache de la consulta a GitHub. 6h es buen balance: suficientemente
-// frecuente para enterarse de updates, lejos del límite de 60 req/h sin
-// auth (4 req/día por panel).
+// Caché de 6h para no quemar el rate limit anónimo de GitHub (60 req/h).
 const CHECK_INTERVAL_MS = 6 * 60 * 60_000
 
-interface ChangelogEntry {
-  sha: string
-  message: string
-  date: string
-  author: string | null
+const AUTHOR_NAME = "Xolotl Tech"
+const AUTHOR_URL = "https://github.com/Xolotl-Tech"
+
+interface ReleaseCategory {
+  label: string
+  icon: string // emoji
+  items: string[]
+}
+
+interface ReleaseInfo {
+  version: string // "1.0.1" sin la "v"
+  name: string
+  publishedAt: string
+  url: string
+  author: { name: string; url: string }
+  categories: ReleaseCategory[]
+  raw: string // body original por si la UI quiere mostrarlo crudo
 }
 
 interface VersionResponse {
-  installed: string | null
-  latest: string | null
+  installed: string // siempre disponible (de package.json)
+  latest: string | null // null si nunca se pudo consultar
   updateAvailable: boolean
   lastCheckedAt: string | null
-  changelog: ChangelogEntry[]
-  unknown?: boolean // panel sin git ni VERSION file
+  release: ReleaseInfo | null
 }
 
-async function fetchLatestFromGitHub(installed: string | null): Promise<{
-  sha: string
-  changelog: ChangelogEntry[]
-} | null> {
+// Convierte "v1.0.1" -> "1.0.1"
+function normalizeTag(tag: string): string {
+  return tag.replace(/^v/i, "")
+}
+
+// Compara versiones semver simples (x.y.z). Devuelve true si latest > installed.
+function isNewer(installed: string, latest: string): boolean {
+  const [ia, ib, ic] = installed.split(".").map((n) => parseInt(n, 10) || 0)
+  const [la, lb, lc] = latest.split(".").map((n) => parseInt(n, 10) || 0)
+  if (la !== ia) return la > ia
+  if (lb !== ib) return lb > ib
+  return lc > ic
+}
+
+// Parsea el body markdown de un release en categorías.
+// Formato esperado en releases:
+//   ## 🛡️ Seguridad
+//   - item 1
+//   - item 2
+//   ## ✨ Nuevas funciones
+//   - ...
+// Si el body no tiene `## ` headings, todo va a una categoría "Cambios".
+function parseReleaseBody(body: string): ReleaseCategory[] {
+  const lines = body.replace(/\r\n/g, "\n").split("\n")
+  const categories: ReleaseCategory[] = []
+  let current: ReleaseCategory | null = null
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    const heading = line.match(/^##\s+(.+)$/)
+    if (heading) {
+      // Separar emoji del texto: "🛡️ Seguridad" o "Seguridad"
+      const text = heading[1].trim()
+      const emojiMatch = text.match(/^(\p{Emoji}+️?\s*)?(.+)$/u)
+      const icon = (emojiMatch?.[1] ?? "").trim()
+      const label = (emojiMatch?.[2] ?? text).trim()
+      current = { label, icon, items: [] }
+      categories.push(current)
+      continue
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/)
+    if (bullet && current) {
+      current.items.push(bullet[1].trim())
+    } else if (bullet && !current) {
+      current = { label: "Cambios", icon: "📝", items: [bullet[1].trim()] }
+      categories.push(current)
+    }
+  }
+
+  // Filtra categorías sin items.
+  return categories.filter((c) => c.items.length > 0)
+}
+
+async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
   try {
-    const headRes = await fetch(`https://api.github.com/repos/${REPO}/commits/${BRANCH}`, {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
       headers: { Accept: "application/vnd.github+json" },
       signal: AbortSignal.timeout(8000),
     })
-    if (!headRes.ok) return null
-    const head = await headRes.json()
-    const latestSha: string = head.sha
-
-    let changelog: ChangelogEntry[] = []
-    if (installed && installed !== latestSha) {
-      // GitHub /compare devuelve los commits entre installed..latest.
-      const cmpRes = await fetch(
-        `https://api.github.com/repos/${REPO}/compare/${installed}...${latestSha}`,
-        { headers: { Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(8000) }
-      )
-      if (cmpRes.ok) {
-        const cmp = await cmpRes.json()
-        const commits = Array.isArray(cmp.commits) ? cmp.commits : []
-        changelog = commits.slice(-30).reverse().map((c: {
-          sha: string
-          commit: { message: string; author: { date: string; name: string } }
-        }) => ({
-          sha: c.sha.slice(0, 7),
-          message: c.commit.message.split("\n")[0].slice(0, 200),
-          date: c.commit.author.date,
-          author: c.commit.author.name,
-        }))
-      }
+    if (!res.ok) return null
+    const r = await res.json()
+    if (!r.tag_name) return null
+    const version = normalizeTag(r.tag_name)
+    const body: string = typeof r.body === "string" ? r.body : ""
+    return {
+      version,
+      name: r.name || `Tezcapanel ${version}`,
+      publishedAt: r.published_at || new Date().toISOString(),
+      url: r.html_url || `https://github.com/${REPO}/releases/tag/${r.tag_name}`,
+      author: { name: AUTHOR_NAME, url: AUTHOR_URL },
+      categories: parseReleaseBody(body),
+      raw: body,
     }
-    return { sha: latestSha, changelog }
   } catch {
     return null
   }
@@ -69,45 +116,45 @@ export async function GET(): Promise<NextResponse<VersionResponse>> {
   const session = await auth()
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({
-      installed: null, latest: null, updateAvailable: false,
-      lastCheckedAt: null, changelog: [],
+      installed: "0.0.0", latest: null, updateAvailable: false,
+      lastCheckedAt: null, release: null,
     }, { status: 401 })
   }
 
-  const installed = process.env.PANEL_COMMIT || null
+  const installed = pkg.version
   const meta = await prisma.systemMeta.findUnique({ where: { id: "singleton" } })
 
   const now = Date.now()
   const lastChecked = meta?.latestCheckedAt?.getTime() ?? 0
   const stale = now - lastChecked > CHECK_INTERVAL_MS
 
-  let latest = meta?.latestSha ?? null
-  let changelog: ChangelogEntry[] = []
+  let latest = meta?.latestSha ?? null // reuso campo: ahora guarda la versión
+  let release: ReleaseInfo | null = null
   try {
-    if (meta?.changelog) changelog = JSON.parse(meta.changelog)
-  } catch { changelog = [] }
+    if (meta?.changelog) release = JSON.parse(meta.changelog)
+  } catch { release = null }
   let lastCheckedAt = meta?.latestCheckedAt?.toISOString() ?? null
 
   if (stale) {
-    const fresh = await fetchLatestFromGitHub(installed)
+    const fresh = await fetchLatestRelease()
     if (fresh) {
-      latest = fresh.sha
-      changelog = fresh.changelog
+      latest = fresh.version
+      release = fresh
       lastCheckedAt = new Date().toISOString()
       await prisma.systemMeta.upsert({
         where: { id: "singleton" },
         update: {
           installedSha: installed,
-          latestSha: fresh.sha,
+          latestSha: fresh.version,
           latestCheckedAt: new Date(),
-          changelog: JSON.stringify(fresh.changelog),
+          changelog: JSON.stringify(fresh),
         },
         create: {
           id: "singleton",
           installedSha: installed,
-          latestSha: fresh.sha,
+          latestSha: fresh.version,
           latestCheckedAt: new Date(),
-          changelog: JSON.stringify(fresh.changelog),
+          changelog: JSON.stringify(fresh),
         },
       })
     }
@@ -116,9 +163,8 @@ export async function GET(): Promise<NextResponse<VersionResponse>> {
   return NextResponse.json({
     installed,
     latest,
-    updateAvailable: !!(installed && latest && installed !== latest),
+    updateAvailable: !!(latest && isNewer(installed, latest)),
     lastCheckedAt,
-    changelog,
-    unknown: !installed,
+    release,
   })
 }
