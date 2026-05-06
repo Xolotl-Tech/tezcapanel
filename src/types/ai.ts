@@ -5,6 +5,24 @@ export interface ChatMessage {
   timestamp: Date
   actions?: ProposedAction[]
   actionsExecuted?: boolean
+  stackProposal?: StackProposal
+  installLog?: InstallLog
+}
+
+export interface StackProposal {
+  recommended: "lamp" | "lemp"
+  // Cuando el usuario clickea uno de los botones se llena para que el card
+  // se reemplace por la consola de instalación y no se pueda re-disparar.
+  chosen?: "lamp" | "lemp" | "later"
+}
+
+export interface InstallLog {
+  stack: "lamp" | "lemp"
+  status: "running" | "success" | "failed" | "interrupted"
+  lines: string[]
+  currentStep?: string
+  totalSteps?: number
+  stepIndex?: number
 }
 
 export interface ProposedAction {

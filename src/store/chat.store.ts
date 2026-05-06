@@ -35,6 +35,18 @@ export const useChatStore = create<ChatState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ messages: state.messages }),
       version: 1,
+      // Si el navegador se cerró mientras una instalación estaba en stream,
+      // al rehidratar el `installLog.status` queda en "running" pero ya no
+      // hay reader vivo. Lo marcamos como interrumpido para que la UI no
+      // muestre un spinner eterno.
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        state.messages = state.messages.map((m) =>
+          m.installLog?.status === "running"
+            ? { ...m, installLog: { ...m.installLog, status: "interrupted" } }
+            : m
+        )
+      },
     }
   )
 )
