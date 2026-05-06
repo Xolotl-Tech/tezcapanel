@@ -269,12 +269,67 @@ case "$1" in
         .catch(e => { console.error('❌ Error:', e.message); prisma.\$disconnect(); process.exit(1); });
     " --require $APP_DIR/node_modules/@prisma/client
     ;;
+  default)
+    # Equivalente a `bt default` de aaPanel: muestra URLs de acceso, puerto,
+    # estado de servicios y los emails de admins registrados. NO imprime
+    # contraseñas (no se guardan en plano). Si olvidaste la contraseña usa
+    # `tezcapanel reset-password`.
+    cd $APP_DIR
+    PORT=$(grep -E "^PORT=" .env 2>/dev/null | cut -d= -f2 || echo 8080)
+    PORT=${PORT:-8080}
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Tezcapanel — información de acceso"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "URLs de acceso:"
+    # IPv4 públicas/privadas detectables sin tocar internet
+    for ip in $(hostname -I 2>/dev/null); do
+      echo "  http://${ip}:${PORT}/login"
+    done
+    PUBIP=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null || true)
+    [ -n "$PUBIP" ] && echo "  http://${PUBIP}:${PORT}/login   (IP pública detectada)"
+    echo ""
+    echo "Puerto del panel:    ${PORT}"
+    echo "Servicios:"
+    systemctl is-active --quiet tezcapanel && echo "  ✔ tezcapanel activo" || echo "  ✖ tezcapanel detenido"
+    systemctl is-active --quiet tezcaagent && echo "  ✔ tezcaagent activo"  || echo "  ✖ tezcaagent detenido"
+    systemctl is-enabled --quiet tezcapanel && echo "  ✔ auto-arranque al boot habilitado" || echo "  ⚠ auto-arranque deshabilitado (corre: sudo systemctl enable tezcapanel tezcaagent)"
+    echo ""
+    echo "Administradores registrados:"
+    node -e "
+      const { PrismaClient } = require('@prisma/client');
+      const p = new PrismaClient();
+      p.user.findMany({ where: { role: 'ADMIN' }, select: { email: true, name: true, createdAt: true } })
+        .then(us => {
+          if (!us.length) { console.log('  (ninguno — abre la URL y crea el primer admin)'); return; }
+          us.forEach(u => console.log('  ' + u.email + (u.name ? ' (' + u.name + ')' : '')));
+        })
+        .catch(() => console.log('  (no se pudo leer la BD)'))
+        .finally(() => p.\$disconnect());
+    " --require $APP_DIR/node_modules/@prisma/client 2>/dev/null
+    echo ""
+    echo "¿Olvidaste la contraseña?  →  sudo tezcapanel reset-password"
+    echo ""
+    ;;
   *)
-    echo "Uso: tezcapanel {start|stop|restart|status|logs|agent|update|reset-password}"
+    cat <<USAGE
+Uso: tezcapanel <comando>
+
+Comandos:
+  start | stop | restart | status   Controlar los servicios
+  logs                              Logs del panel en vivo
+  agent                             Logs del agente en vivo
+  default                           Mostrar URLs, puerto y admins
+  update                            Actualizar a la última versión
+  reset-password                    Cambiar contraseña de un admin
+USAGE
     ;;
 esac
 CLIEOF
 chmod +x /usr/local/bin/tezcapanel
+# Alias corto: `tz` → `tezcapanel`. Igual que aaPanel expone `bt`.
+ln -sf /usr/local/bin/tezcapanel /usr/local/bin/tz
 log "CLI instalado"
 
 header "Iniciando Tezcapanel"
