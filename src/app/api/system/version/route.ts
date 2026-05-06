@@ -126,13 +126,26 @@ export async function GET(): Promise<NextResponse<VersionResponse>> {
 
   const now = Date.now()
   const lastChecked = meta?.latestCheckedAt?.getTime() ?? 0
-  const stale = now - lastChecked > CHECK_INTERVAL_MS
+  // Si la caché trae datos del esquema viejo (commit SHA en `latestSha` o un
+  // `release` JSON sin `categories`), forzamos refetch ignorando el TTL.
+  const isSemver = (v: string | null | undefined) =>
+    typeof v === "string" && /^\d+\.\d+\.\d+/.test(v)
+  const cachedRelease: ReleaseInfo | null = (() => {
+    try {
+      const parsed = meta?.changelog ? JSON.parse(meta.changelog) : null
+      // Discriminador del esquema nuevo: tiene `version` y `categories`.
+      if (parsed && typeof parsed === "object" && "version" in parsed && "categories" in parsed) {
+        return parsed as ReleaseInfo
+      }
+      return null
+    } catch { return null }
+  })()
+  const cacheCorrupt = (meta?.latestSha && !isSemver(meta.latestSha)) ||
+                       (meta?.changelog && !cachedRelease)
+  const stale = cacheCorrupt || now - lastChecked > CHECK_INTERVAL_MS
 
-  let latest = meta?.latestSha ?? null // reuso campo: ahora guarda la versión
-  let release: ReleaseInfo | null = null
-  try {
-    if (meta?.changelog) release = JSON.parse(meta.changelog)
-  } catch { release = null }
+  let latest = isSemver(meta?.latestSha) ? meta!.latestSha! : null
+  let release: ReleaseInfo | null = cachedRelease
   let lastCheckedAt = meta?.latestCheckedAt?.toISOString() ?? null
 
   if (stale) {

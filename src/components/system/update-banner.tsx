@@ -236,7 +236,7 @@ function UpdateModal({ info, onClose }: { info: VersionResponse; onClose: () => 
         {/* Cuerpo */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {phase === "review" ? (
-            updateAvailable && release && release.categories.length > 0 ? (
+            updateAvailable && release && Array.isArray(release.categories) && release.categories.length > 0 ? (
               <div className="space-y-5">
                 {release.categories.map((cat) => (
                   <div key={cat.label}>
