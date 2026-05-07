@@ -254,6 +254,21 @@ case "$1" in
     echo "  Restablecer contraseña de administrador"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
+    # Si el usuario no recuerda el email, listamos los admins existentes
+    # antes de pedirlo. node -e debe correr DESDE $APP_DIR, si no, el
+    # resolver de Node busca node_modules a partir de la CWD del usuario
+    # (típicamente /opt o ~) y no encuentra ni @prisma/client ni bcryptjs.
+    cd $APP_DIR
+    echo "Admins registrados:"
+    node -e "
+      const { PrismaClient } = require('@prisma/client');
+      const p = new PrismaClient();
+      p.user.findMany({ where: { role: 'ADMIN' }, select: { email: true, name: true } })
+        .then(us => { us.forEach(u => console.log('  ' + u.email + (u.name ? ' (' + u.name + ')' : ''))); })
+        .catch(() => console.log('  (no se pudo leer la BD)'))
+        .finally(() => p.\$disconnect());
+    " 2>/dev/null
+    echo ""
     read -p "Email del admin: " ADMIN_EMAIL
     read -s -p "Nueva contraseña (mín. 8 caracteres): " NEW_PASS
     echo ""
@@ -261,14 +276,28 @@ case "$1" in
       echo "❌ La contraseña debe tener al menos 8 caracteres"
       exit 1
     fi
-    HASHED=$(node -e "const bcrypt = require('bcryptjs'); bcrypt.hash('$NEW_PASS', 12).then(h => console.log(h));")
-    node -e "
+    # Pasamos la contraseña por env en vez de interpolarla en el JS.
+    # Evita romperse con comillas, $, backticks, etc., en el password.
+    NEW_PASS="$NEW_PASS" ADMIN_EMAIL="$ADMIN_EMAIL" node -e "
+      const bcrypt = require('bcryptjs');
       const { PrismaClient } = require('@prisma/client');
-      const prisma = new PrismaClient();
-      prisma.user.update({ where: { email: '$ADMIN_EMAIL' }, data: { password: '$HASHED' } })
-        .then(u => { console.log('✔ Contraseña actualizada para:', u.email); prisma.\$disconnect(); })
-        .catch(e => { console.error('❌ Error:', e.message); prisma.\$disconnect(); process.exit(1); });
-    " --require $APP_DIR/node_modules/@prisma/client
+      (async () => {
+        const prisma = new PrismaClient();
+        try {
+          const hash = await bcrypt.hash(process.env.NEW_PASS, 12);
+          const u = await prisma.user.update({
+            where: { email: process.env.ADMIN_EMAIL },
+            data: { password: hash },
+          });
+          console.log('✔ Contraseña actualizada para:', u.email);
+        } catch (e) {
+          console.error('❌ Error:', e.message);
+          process.exit(1);
+        } finally {
+          await prisma.\$disconnect();
+        }
+      })();
+    "
     ;;
   default)
     # Equivalente a `bt default` de aaPanel: muestra URLs de acceso, puerto,
@@ -308,7 +337,7 @@ case "$1" in
         })
         .catch(() => console.log('  (no se pudo leer la BD)'))
         .finally(() => p.\$disconnect());
-    " --require $APP_DIR/node_modules/@prisma/client 2>/dev/null
+    " 2>/dev/null
     echo ""
     echo "¿Olvidaste la contraseña?  →  sudo tezcapanel reset-password"
     echo ""

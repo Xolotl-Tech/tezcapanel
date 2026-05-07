@@ -153,6 +153,8 @@ function UpdateModal({
   const [phase, setPhase] = useState<"review" | "running" | "success" | "failed">("review")
   const [log, setLog] = useState<string[]>([])
   const pollRef = useRef<number | null>(null)
+  const seenRunningRef = useRef(false)
+  const pollStartRef = useRef<number>(0)
   const expectedVersion = info.latest ?? ""
 
   function stopPolling() {
@@ -174,18 +176,36 @@ function UpdateModal({
       const data = (await r.json()) as UpdateStatusResponse
       setLog(data.log)
 
+      const versionMatches = !!expectedVersion && data.installedVersion === expectedVersion
+      const elapsedMs = pollStartRef.current ? Date.now() - pollStartRef.current : 0
+
       if (data.state === "running") {
+        seenRunningRef.current = true
         setPhase("running")
       } else if (data.state === "success") {
-        // Confirmación dura: la versión instalada coincide con la esperada.
-        if (!expectedVersion || data.installedVersion === expectedVersion) {
+        if (!expectedVersion || versionMatches) {
           setPhase("success")
           stopPolling()
-          // Dejamos que el usuario vea el resultado y refresque cuando quiera.
         }
       } else if (data.state === "failed") {
         setPhase("failed")
         stopPolling()
+      } else {
+        // state === "idle". Hay un par de razones por las que el endpoint
+        // puede caer aquí aunque la actualización ya haya terminado bien:
+        // 1) systemd ya hizo --collect del unit (LoadState=not-found) y
+        //    journalctl devolvió vacío por timing/permisos justo cuando
+        //    pollee. El endpoint cae en "idle" por defecto.
+        // 2) El panel se reinició entre que terminó el unit y este poll.
+        //
+        // En ambos casos, si ya vimos "running" antes y la versión ya
+        // está instalada (o llevamos > 30s polleando con versión correcta),
+        // tratamos como éxito. Sin esto el modal se quedaba colgado en
+        // "Actualizando..." indefinidamente.
+        if (versionMatches && (seenRunningRef.current || elapsedMs > 30_000)) {
+          setPhase("success")
+          stopPolling()
+        }
       }
     } catch {
       // Ignorar errores de red transitorios (panel reiniciándose).
@@ -224,6 +244,8 @@ function UpdateModal({
 
     // Polling cada 2s. La primera respuesta puede estar mientras el unit aún
     // no fue creado por systemd-run, así que no salimos al primer "idle".
+    seenRunningRef.current = false
+    pollStartRef.current = Date.now()
     pollRef.current = window.setInterval(pollStatus, 2000)
     pollStatus()
   }
