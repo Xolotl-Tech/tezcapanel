@@ -3,24 +3,32 @@ import { persist, createJSONStorage } from "zustand/middleware"
 import type { ChatMessage } from "@/types/ai"
 
 interface ChatState {
+  // ID de la conversación abierta. Null = no hay ninguna seleccionada
+  // (el componente abre/crea una al iniciar). Es lo único que persistimos
+  // en localStorage para que al recargar el navegador vuelvas a la
+  // conversación que tenías abierta. Los mensajes en sí ya viven en BD.
+  currentId: string | null
+  setCurrentId: (id: string | null) => void
+
+  // Estado transitorio del chat actual — se llena cuando el componente
+  // hidrata mensajes desde /api/byte/conversations/[id].
   messages: ChatMessage[]
   isLoading: boolean
+  setMessages: (messages: ChatMessage[]) => void
   addMessage: (message: ChatMessage) => void
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void
   setLoading: (loading: boolean) => void
   clearMessages: () => void
 }
 
-// Persistencia en localStorage. Sobrevive a refresh y reinicios del navegador
-// per-perfil. No multi-dispositivo — eso queda para 1.0.4 con BD-backed
-// conversation history. `isLoading` no se persiste a propósito: si el panel
-// se reinicia mientras Byte respondía, no queremos quedar trabados en
-// "Pensando…" para siempre.
 export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
+      currentId: null,
+      setCurrentId: (currentId) => set({ currentId }),
       messages: [],
       isLoading: false,
+      setMessages: (messages) => set({ messages }),
       addMessage: (message) =>
         set((state) => ({ messages: [...state.messages, message] })),
       updateMessage: (id, updates) =>
@@ -33,20 +41,8 @@ export const useChatStore = create<ChatState>()(
     {
       name: "tezcapanel.byte.chat",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ messages: state.messages }),
-      version: 1,
-      // Si el navegador se cerró mientras una instalación estaba en stream,
-      // al rehidratar el `installLog.status` queda en "running" pero ya no
-      // hay reader vivo. Lo marcamos como interrumpido para que la UI no
-      // muestre un spinner eterno.
-      onRehydrateStorage: () => (state) => {
-        if (!state) return
-        state.messages = state.messages.map((m) =>
-          m.installLog?.status === "running"
-            ? { ...m, installLog: { ...m.installLog, status: "interrupted" } }
-            : m
-        )
-      },
+      partialize: (state) => ({ currentId: state.currentId }),
+      version: 2,
     }
   )
 )

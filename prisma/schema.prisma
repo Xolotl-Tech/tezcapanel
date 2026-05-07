@@ -16,6 +16,7 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   notificationPreferences NotificationPreferences?
+  byteConversations       ByteConversation[]
 }
 
 model AuditLog {
@@ -343,4 +344,32 @@ model SystemMeta {
   latestCheckedAt DateTime?
   changelog       String?   // JSON: [{sha, message, date, author}]
   updatedAt       DateTime  @updatedAt
+}
+
+model ByteConversation {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("Nueva conversación")
+  messages  ByteMessage[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([updatedAt])
+}
+
+model ByteMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  conversation   ByteConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String   // user | assistant
+  content        String
+  // JSON con campos UI-only (actions, stackProposal, installLog).
+  // Se persiste para que el chat se vea igual al recargar.
+  metadata       String?
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([createdAt])
 }
