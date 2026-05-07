@@ -58,7 +58,12 @@ const SESSION_COOKIES = [
   "authjs.session-token",
   "__Secure-authjs.session-token",
 ]
-const SOCKET_IDLE_MS = 60_000
+// 30 min sin tráfico cierra el socket. Antes era 60s y mataba la sesión
+// leyendo `man` o un log largo. El cliente manda ping JSON cada 30s así
+// que terminales realmente activas nunca llegan a este timeout — sólo
+// cierra sesiones abandonadas (laptop cerrada, navegador colgado),
+// liberando FDs sin afectar al usuario que sigue trabajando.
+const SOCKET_IDLE_MS = 30 * 60_000
 const UPGRADE_RATE_WINDOW_MS = 60_000
 const UPGRADE_RATE_MAX = 30 // 30 intentos / minuto / IP
 const upgradeHits = new Map() // ip -> number[] (timestamps)
