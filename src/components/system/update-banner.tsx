@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
+import { useConfirm } from "@/components/ui/confirm-dialog"
 import { Sparkles, X, ArrowUpCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react"
 
 interface ReleaseCategory {
@@ -148,6 +149,7 @@ function UpdateModal({
   const updateAvailable = info.updateAvailable
   const release = info.release
   const { toast } = useToast()
+  const confirm = useConfirm()
 
   // Estado local del proceso de actualización (independiente de info).
   const [phase, setPhase] = useState<"review" | "running" | "success" | "failed">("review")
@@ -213,10 +215,12 @@ function UpdateModal({
   }
 
   async function startUpdate() {
-    if (!confirm(
+    const ok = await confirm(
       `Esto actualizará Tezcapanel a la versión ${info.latest}. ` +
-      `El panel se reiniciará — toma ~30-60 segundos. ¿Continuar?`
-    )) return
+      `El panel se reiniciará — toma ~30-60 segundos.`,
+      "Confirmar actualización"
+    )
+    if (!ok) return
 
     setPhase("running")
     setLog([])
