@@ -1,14 +1,20 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2, Plus, X } from "lucide-react"
+import { Loader2, Plus, X, Globe } from "lucide-react"
+import { DomainDnsHint } from "@/components/web/domain-dns-hint"
 
 interface CreateSiteDialogProps {
   onClose: () => void
   onCreate: (data: { domain: string; rootPath: string; phpVersion?: string }) => Promise<void>
+}
+
+interface IpsResp {
+  lan: string[]
+  public: string | null
 }
 
 export function CreateSiteDialog({ onClose, onCreate }: CreateSiteDialogProps) {
@@ -19,6 +25,14 @@ export function CreateSiteDialog({ onClose, onCreate }: CreateSiteDialogProps) {
     rootPath: "/var/www/",
     phpVersion: "",
   })
+  const [serverIps, setServerIps] = useState<IpsResp | null>(null)
+
+  useEffect(() => {
+    fetch("/api/system/ips")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) setServerIps(d) })
+      .catch(() => {})
+  }, [])
 
   function handleDomainChange(value: string) {
     setForm((f) => ({
@@ -68,6 +82,8 @@ export function CreateSiteDialog({ onClose, onCreate }: CreateSiteDialogProps) {
               onChange={(e) => handleDomainChange(e.target.value)}
               className="bg-input border-border font-mono text-sm"
             />
+
+            <DomainDnsHint domain={form.domain} />
           </div>
 
           <div className="space-y-2">
@@ -96,6 +112,30 @@ export function CreateSiteDialog({ onClose, onCreate }: CreateSiteDialogProps) {
           </div>
 
           {error && <p className="text-xs text-destructive">{error}</p>}
+
+          {/* IPs del servidor — referencia rápida */}
+          {serverIps && (serverIps.lan.length > 0 || serverIps.public) && (
+            <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <Globe className="w-3 h-3" />
+                IPs de este servidor (apunta tu dominio aquí)
+              </div>
+              <div className="space-y-0.5 font-mono text-[11px]">
+                {serverIps.public && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-primary">{serverIps.public}</span>
+                    <span className="text-muted-foreground text-[10px]">pública</span>
+                  </div>
+                )}
+                {serverIps.lan.map((ip) => (
+                  <div key={ip} className="flex items-center gap-2">
+                    <span>{ip}</span>
+                    <span className="text-muted-foreground text-[10px]">LAN</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="bg-secondary/50 border border-border rounded-lg p-3">
             <p className="text-xs text-muted-foreground">

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { X, RefreshCw, ShoppingCart, FileText, Sparkles } from "lucide-react"
 import { safeJson } from "@/lib/utils"
+import { DomainDnsHint } from "@/components/web/domain-dns-hint"
 
 interface Props {
   open: boolean
@@ -116,6 +117,7 @@ export function AddWpDialog({ open, onClose, onCreated, categories }: Props) {
             <div className="space-y-1.5">
               <Label className="text-xs">Dominio *</Label>
               <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="ejemplo.com" className="font-mono text-sm" />
+              <DomainDnsHint domain={domain.trim()} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Título del sitio</Label>
