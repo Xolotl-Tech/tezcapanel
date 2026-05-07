@@ -7,7 +7,8 @@ import { ChatInput } from "@/components/ai/chat-input"
 import { ChatSuggestions } from "@/components/ai/chat-suggestions"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Bot, Trash2, X, Minus } from "lucide-react"
+import { Trash2, X, Minus } from "lucide-react"
+import Image from "next/image"
 import type { ChatMessage, ProposedAction, InstallLog } from "@/types/ai"
 
 function generateId() {
@@ -369,7 +370,7 @@ export function FloatingByte() {
           aria-label="Abrir Byte"
           title="Abrir Byte AI"
         >
-          <Bot className="w-6 h-6" />
+          <Image src="/byte-ai.webp" alt="Byte" width={32} height={32} className="w-8 h-8 object-contain" />
           {messages.filter((m) => m.id !== "welcome" && m.id !== "welcome-scanning").length > 0 && (
             <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-accent rounded-full ring-2 ring-card animate-pulse" />
           )}
@@ -385,7 +386,7 @@ export function FloatingByte() {
           <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card/95">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
-                <Bot className="w-4 h-4 text-primary" />
+                <Image src="/byte-ai.webp" alt="Byte" width={24} height={24} className="w-6 h-6 object-contain" />
               </div>
               <div className="leading-tight">
                 <div className="flex items-center gap-1.5">
@@ -444,7 +445,7 @@ export function FloatingByte() {
                 {isLoading && messages[messages.length - 1]?.content === "..." && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                      <Bot className="w-3.5 h-3.5 text-primary" />
+                      <Image src="/byte-ai.webp" alt="Byte" width={20} height={20} className="w-5 h-5 object-contain" />
                     </div>
                     <div className="bg-card border border-border rounded-lg px-4 py-3">
                       <div className="flex gap-1">

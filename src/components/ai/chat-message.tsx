@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils"
 import type { ChatMessage, ProposedAction } from "@/types/ai"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Bot, User, CheckCircle2, Terminal, Server, Package, AlertTriangle, Loader2 } from "lucide-react"
+import { User, CheckCircle2, Terminal, Server, Package, AlertTriangle, Loader2 } from "lucide-react"
+import Image from "next/image"
 
 interface ChatMessageProps {
   message: ChatMessage
@@ -60,7 +61,7 @@ export function ChatMessageItem({ message, onConfirmActions, onChooseStack }: Ch
       )}>
         {isUser
           ? <User className="w-3.5 h-3.5 text-muted-foreground" />
-          : <Bot className="w-3.5 h-3.5 text-primary" />
+          : <Image src="/byte-ai.webp" alt="Byte" width={20} height={20} className="w-5 h-5 object-contain" />
         }
       </div>
 
