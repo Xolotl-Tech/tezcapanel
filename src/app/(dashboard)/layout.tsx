@@ -14,20 +14,24 @@ export default async function DashboardLayout({
   const session = await auth()
   if (!session) redirect("/login")
 
+  // ConfirmProvider envuelve TODO el dashboard (incluido el Topbar) porque
+  // el banner de actualización vive ahí y usa useConfirm. Antes vivía sólo
+  // alrededor de <main>, lo que tronaba el banner con "must be used within
+  // ConfirmProvider" al confirmar el update.
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0">
-        <Topbar user={session.user} />
-        <main className="flex-1 overflow-y-auto p-6">
-          <MetricsProvider>
-            <ConfirmProvider>
+    <ConfirmProvider>
+      <div className="flex h-screen overflow-hidden bg-background">
+        <Sidebar />
+        <div className="flex flex-col flex-1 min-w-0">
+          <Topbar user={session.user} />
+          <main className="flex-1 overflow-y-auto p-6">
+            <MetricsProvider>
               {children}
-            </ConfirmProvider>
-          </MetricsProvider>
-        </main>
+            </MetricsProvider>
+          </main>
+        </div>
+        <FloatingByte />
       </div>
-      <FloatingByte />
-    </div>
+    </ConfirmProvider>
   )
 }

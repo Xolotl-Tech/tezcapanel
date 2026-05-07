@@ -366,7 +366,7 @@ export function FloatingByte() {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 active:scale-95 transition flex items-center justify-center border border-primary/40"
+          className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full bg-black shadow-lg hover:scale-105 active:scale-95 transition flex items-center justify-center border border-border"
           aria-label="Abrir Byte"
           title="Abrir Byte AI"
         >
@@ -385,7 +385,7 @@ export function FloatingByte() {
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card/95">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-black border border-border flex items-center justify-center">
                 <Image src="/byte-ai.webp" alt="Byte" width={24} height={24} className="w-6 h-6 object-contain" />
               </div>
               <div className="leading-tight">
@@ -444,7 +444,7 @@ export function FloatingByte() {
                 ))}
                 {isLoading && messages[messages.length - 1]?.content === "..." && (
                   <div className="flex gap-3">
-                    <div className="w-7 h-7 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                    <div className="w-7 h-7 rounded-md bg-black border border-border flex items-center justify-center shrink-0">
                       <Image src="/byte-ai.webp" alt="Byte" width={20} height={20} className="w-5 h-5 object-contain" />
                     </div>
                     <div className="bg-card border border-border rounded-lg px-4 py-3">

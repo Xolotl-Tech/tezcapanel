@@ -57,7 +57,7 @@ export function ChatMessageItem({ message, onConfirmActions, onChooseStack }: Ch
         "w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5",
         isUser
           ? "bg-secondary border border-border"
-          : "bg-primary/10 border border-primary/20"
+          : "bg-black border border-border"
       )}>
         {isUser
           ? <User className="w-3.5 h-3.5 text-muted-foreground" />

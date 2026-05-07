@@ -386,7 +386,7 @@ function UpdateModal({
                 disabled={refreshing}
               >
                 <RefreshCw className={`w-3 h-3 mr-2 ${refreshing ? "animate-spin" : ""}`} />
-                {refreshing ? "Verificando…" : "Re-verificar"}
+                {refreshing ? "Buscando…" : "Buscar actualización"}
               </Button>
               <Button size="sm" variant="outline" onClick={onClose}>Cerrar</Button>
             </>
@@ -399,7 +399,7 @@ function UpdateModal({
           )}
           {phase === "success" && (
             <Button size="sm" onClick={() => window.location.reload()}>
-              Refrescar página
+              Reiniciar panel
             </Button>
           )}
           {phase === "failed" && (
