@@ -208,7 +208,7 @@ export default function DatabasesPage() {
                         variant="ghost"
                         size="sm"
                         className="h-7 px-2 text-[11px] text-primary hover:text-primary hover:bg-primary/10"
-                        onClick={() => window.open(`http://localhost/phpmyadmin`, "_blank")}
+                        onClick={() => window.open(`${window.location.protocol}//${window.location.hostname}:8088`, "_blank")}
                       >
                         <ExternalLink className="w-3 h-3 mr-1" />
                         phpMyAdmin

@@ -2356,60 +2356,167 @@ async function detectService(unit) {
 // (al revés del panel, que sí lo hace en update).
 let installInProgress = false
 
+// Snippet de nginx para servir phpMyAdmin en puerto 8088. Lo separamos
+// del puerto 80 a propósito: el 80 está dedicado a vhosts de sitios del
+// usuario (server_name match por dominio), así que phpMyAdmin no puede
+// vivir como `location /phpmyadmin` sin chocar. Convención aaPanel: la
+// herramienta de DB en su propio puerto. Documentamos en el README que
+// 8088 debe estar abierto en el firewall del proveedor (no sólo en ufw
+// local).
+function phpMyAdminNginxConfig(socket, docroot) {
+  return `# Generado por tezcapanel — phpMyAdmin
+server {
+    listen 8088 default_server;
+    listen [::]:8088 default_server;
+    server_name _;
+
+    root ${docroot};
+    index index.php index.html;
+
+    access_log /var/log/nginx/phpmyadmin.access.log;
+    error_log  /var/log/nginx/phpmyadmin.error.log;
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \\.php$ {
+        fastcgi_pass unix:${socket};
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+
+    location ~ /\\.(ht|git) { deny all; }
+}
+`
+}
+
 function buildInstallSteps(stack, family) {
   const steps = []
   if (family === "rhel") {
     steps.push({ label: "Actualizando índice de paquetes", cmd: "dnf", args: ["-y", "makecache"] })
+    // EPEL es donde vive phpmyadmin en Rocky/RHEL. El paquete epel-release
+    // a su vez puede no estar enabled por defecto; lo instalamos antes que
+    // nada para que el siguiente dnf install lo encuentre.
+    steps.push({ label: "Habilitando repositorios EPEL", cmd: "dnf", args: ["-y", "install", "epel-release"] })
     if (stack === "lemp") {
       steps.push({
-        label: "Instalando nginx + MariaDB + PHP",
+        label: "Instalando nginx + MariaDB + PHP + phpMyAdmin",
         cmd: "dnf",
         args: ["-y", "install", "nginx", "mariadb-server", "php", "php-fpm",
-               "php-mysqlnd", "php-cli", "php-common", "php-json", "certbot",
-               "python3-certbot-nginx"],
+               "php-mysqlnd", "php-cli", "php-common", "php-json", "phpmyadmin",
+               "certbot", "python3-certbot-nginx"],
       })
       steps.push({ label: "Habilitando servicios", cmd: "systemctl",
                    args: ["enable", "--now", "nginx", "mariadb", "php-fpm"] })
+      // En Rocky 9 el socket por defecto de php-fpm es /run/php-fpm/www.sock.
+      // El paquete phpmyadmin instala los archivos en /usr/share/phpMyAdmin.
+      // SELinux: el dir ya viene etiquetado como httpd_sys_content_t, que
+      // nginx (proceso unconfined o httpd_t) puede leer.
+      steps.push({
+        label: "Configurando phpMyAdmin en puerto 8088",
+        cmd: "bash",
+        args: ["-c", `cat > /etc/nginx/conf.d/phpmyadmin.conf <<'PMACONF'
+${phpMyAdminNginxConfig("/run/php-fpm/www.sock", "/usr/share/phpMyAdmin")}
+PMACONF
+nginx -t && systemctl reload nginx
+firewall-cmd --permanent --add-port=8088/tcp 2>/dev/null || true
+firewall-cmd --reload 2>/dev/null || true
+echo "phpMyAdmin listo en puerto 8088"`],
+      })
     } else {
       steps.push({
-        label: "Instalando Apache + MariaDB + PHP",
+        label: "Instalando Apache + MariaDB + PHP + phpMyAdmin",
         cmd: "dnf",
         args: ["-y", "install", "httpd", "mariadb-server", "php", "php-mysqlnd",
-               "php-cli", "php-common", "mod_ssl", "certbot",
+               "php-cli", "php-common", "phpmyadmin", "mod_ssl", "certbot",
                "python3-certbot-apache"],
       })
       steps.push({ label: "Habilitando servicios", cmd: "systemctl",
                    args: ["enable", "--now", "httpd", "mariadb"] })
+      // En LAMP RHEL el RPM de phpmyadmin ya configura un alias en httpd
+      // (/etc/httpd/conf.d/phpMyAdmin.conf). Lo dejamos accesible vía
+      // puerto 8088 redireccionando.
+      steps.push({
+        label: "Abriendo puerto 8088 (phpMyAdmin via Apache)",
+        cmd: "bash",
+        args: ["-c", `cat > /etc/httpd/conf.d/tezca-phpmyadmin-port.conf <<'EOF'
+Listen 8088
+<VirtualHost *:8088>
+    DocumentRoot /usr/share/phpMyAdmin
+    <Directory /usr/share/phpMyAdmin>
+        Require all granted
+    </Directory>
+</VirtualHost>
+EOF
+apachectl configtest && systemctl reload httpd
+firewall-cmd --permanent --add-port=8088/tcp 2>/dev/null || true
+firewall-cmd --reload 2>/dev/null || true`],
+      })
     }
   } else if (family === "debian") {
     steps.push({ label: "Actualizando índice de paquetes", cmd: "apt-get", args: ["update"] })
+    // Preseed para que phpmyadmin no intente lanzar prompt interactivo
+    // (dbconfig-common). El usuario configura DB después desde el panel.
+    steps.push({
+      label: "Preconfigurando phpMyAdmin (sin prompts)",
+      cmd: "bash",
+      args: ["-c", `echo "phpmyadmin phpmyadmin/dbconfig-install boolean false" | debconf-set-selections
+echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect" | debconf-set-selections`],
+    })
     if (stack === "lemp") {
       steps.push({
-        label: "Instalando nginx + MariaDB + PHP",
+        label: "Instalando nginx + MariaDB + PHP + phpMyAdmin",
         cmd: "apt-get",
         args: ["-y", "install", "nginx", "mariadb-server", "php-fpm",
-               "php-mysql", "php-cli", "php-common", "certbot",
-               "python3-certbot-nginx"],
+               "php-mysql", "php-cli", "php-common", "phpmyadmin",
+               "certbot", "python3-certbot-nginx"],
       })
-      // En Debian/Ubuntu el unit de PHP-FPM lleva el número de versión
-      // (php8.2-fpm, php8.3-fpm). Resolvemos en runtime con bash en lugar
-      // de hardcodear la versión, que cambia por release.
       steps.push({
         label: "Habilitando servicios",
         cmd: "bash",
         args: ["-c", "systemctl enable --now nginx mariadb && " +
                     "systemctl enable --now $(systemctl list-unit-files 'php*-fpm.service' --no-legend --no-pager | awk '{print $1}' | head -n1)"],
       })
+      steps.push({
+        label: "Configurando phpMyAdmin en puerto 8088",
+        cmd: "bash",
+        args: ["-c", `SOCK=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -n1)
+[ -z "$SOCK" ] && SOCK=/run/php/php-fpm.sock
+cat > /etc/nginx/conf.d/phpmyadmin.conf <<PMACONF
+${phpMyAdminNginxConfig("$SOCK", "/usr/share/phpmyadmin")}
+PMACONF
+nginx -t && systemctl reload nginx
+ufw allow 8088/tcp 2>/dev/null || true
+echo "phpMyAdmin listo en puerto 8088"`],
+      })
     } else {
       steps.push({
-        label: "Instalando Apache + MariaDB + PHP",
+        label: "Instalando Apache + MariaDB + PHP + phpMyAdmin",
         cmd: "apt-get",
         args: ["-y", "install", "apache2", "mariadb-server", "php",
-               "libapache2-mod-php", "php-mysql", "php-cli", "certbot",
-               "python3-certbot-apache"],
+               "libapache2-mod-php", "php-mysql", "phpmyadmin",
+               "certbot", "python3-certbot-apache"],
       })
       steps.push({ label: "Habilitando servicios", cmd: "systemctl",
                    args: ["enable", "--now", "apache2", "mariadb"] })
+      steps.push({
+        label: "Configurando phpMyAdmin en puerto 8088",
+        cmd: "bash",
+        args: ["-c", `cat > /etc/apache2/conf-available/tezca-phpmyadmin-port.conf <<'EOF'
+Listen 8088
+<VirtualHost *:8088>
+    DocumentRoot /usr/share/phpmyadmin
+    <Directory /usr/share/phpmyadmin>
+        Require all granted
+    </Directory>
+</VirtualHost>
+EOF
+a2enconf tezca-phpmyadmin-port
+apache2ctl configtest && systemctl reload apache2
+ufw allow 8088/tcp 2>/dev/null || true`],
+      })
     }
   }
   return steps
