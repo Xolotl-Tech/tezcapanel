@@ -373,3 +373,19 @@ model ByteMessage {
   @@index([conversationId])
   @@index([createdAt])
 }
+
+model Feedback {
+  id          String   @id @default(cuid())
+  userId      String?
+  userEmail   String?
+  category    String   @default("general") // general | bug | feature | other
+  subject     String
+  message     String
+  panelVersion String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+  emailedAt   DateTime?
+  emailError  String?
+
+  @@index([createdAt])
+}
